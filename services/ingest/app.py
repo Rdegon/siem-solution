@@ -99,7 +99,7 @@ async def health() -> dict:
 @app.post("/ingest/json")
 async def ingest_json(
     payload: Any = Body(...),
-    request: Request | None = None,
+    request: Request,
 ) -> dict:
     """Принимает JSON (объект или список объектов) и пишет в Redis Stream.
 
@@ -108,7 +108,7 @@ async def ingest_json(
       - список объектов: [ { ... }, { ... } ]
     """
     redis = _get_redis()
-    _settings = _get_settings()  # пока просто заставляем линтер молчать
+    _settings = _get_settings()  # пока просто, чтобы не ругался линтер
 
     # Нормализуем в список
     if isinstance(payload, list):
@@ -120,10 +120,7 @@ async def ingest_json(
     if not all(isinstance(e, dict) for e in events):
         raise HTTPException(status_code=400, detail="payload_must_be_object_or_list")
 
-    source_ip = ""
-    if request and request.client:
-        source_ip = request.client.host or ""
-
+    source_ip = request.client.host if request.client else ""
     source_type = "http_json"
 
     count = 0
