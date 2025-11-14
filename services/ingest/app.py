@@ -98,8 +98,8 @@ async def health() -> dict:
 
 @app.post("/ingest/json")
 async def ingest_json(
-    payload: Any = Body(...),
     request: Request,
+    payload: Any = Body(...),
 ) -> dict:
     """Принимает JSON (объект или список объектов) и пишет в Redis Stream.
 
