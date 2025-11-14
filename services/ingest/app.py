@@ -12,10 +12,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import Body, FastAPI, HTTPException, Request
 from redis.asyncio import Redis
 
 from .config import IngestSettings
@@ -75,7 +74,7 @@ async def on_shutdown() -> None:
 
 
 @app.get("/health")
-async def health() -> JSONResponse:
+async def health() -> dict:
     """Проверка состояния сервиса и Redis."""
     settings = _get_settings()
     redis = _get_redis()
@@ -89,31 +88,42 @@ async def health() -> JSONResponse:
         )
         raise HTTPException(status_code=503, detail="redis_unhealthy") from exc
 
-    return JSONResponse(
-        {
-            "status": "ok",
-            "env": settings.env,
-            "instance": settings.instance_name,
-            "redis": "ok" if pong else "failed",
-        }
-    )
+    return {
+        "status": "ok",
+        "env": settings.env,
+        "instance": settings.instance_name,
+        "redis": "ok" if pong else "failed",
+    }
 
 
 @app.post("/ingest/json")
-async def ingest_json(payload: Any, request: Request) -> JSONResponse:
-    """Принимает JSON (объект или список объектов) и пишет в Redis Stream."""
-    redis = _get_redis()
-    settings = _get_settings()
+async def ingest_json(
+    payload: Any = Body(...),
+    request: Request | None = None,
+) -> dict:
+    """Принимает JSON (объект или список объектов) и пишет в Redis Stream.
 
+    Ожидается:
+      - объект: { ... }
+      - список объектов: [ { ... }, { ... } ]
+    """
+    redis = _get_redis()
+    _settings = _get_settings()  # пока просто заставляем линтер молчать
+
+    # Нормализуем в список
     if isinstance(payload, list):
-        events = payload
+        events: List[Any] = payload
     else:
         events = [payload]
 
+    # Проверяем, что каждый элемент — словарь
     if not all(isinstance(e, dict) for e in events):
         raise HTTPException(status_code=400, detail="payload_must_be_object_or_list")
 
-    source_ip = request.client.host if request.client else ""
+    source_ip = ""
+    if request and request.client:
+        source_ip = request.client.host or ""
+
     source_type = "http_json"
 
     count = 0
@@ -131,9 +141,9 @@ async def ingest_json(payload: Any, request: Request) -> JSONResponse:
             "extra": {
                 "count": count,
                 "source_ip": source_ip,
-                "path": str(request.url.path),
+                "path": "/ingest/json",
             }
         },
     )
 
-    return JSONResponse({"status": "ok", "ingested": count})
+    return {"status": "ok", "ingested": count}
