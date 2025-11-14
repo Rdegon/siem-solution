@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 from clickhouse_driver import Client
 from redis.asyncio import Redis
@@ -118,7 +118,7 @@ class NormalizerWorker:
 
                     events_to_insert.append(uem)
 
-                    # Пытаемся положить нормализованное событие в Redis Stream siem:normalized
+                    # Пишем нормализованное событие в Redis Stream siem:normalized
                     try:
                         await redis.xadd(
                             self._settings.normalized_stream_key,
@@ -138,20 +138,33 @@ class NormalizerWorker:
                         )
 
             if events_to_insert:
-                rows = [
-                    (
-                        e.get("event.provider") or "",
-                        e.get("event.category") or "",
-                        e.get("event.type") or "",
-                        e.get("source.ip") or "",
-                        e.get("event.original") or "",
+                # Готовим строки для ClickHouse
+                rows = []
+                for e in events_to_insert:
+                    event_provider = e.get("event.provider") or ""
+                    event_category = e.get("event.category") or ""
+                    event_type = e.get("event.type") or ""
+                    src_ip = e.get("source.ip") or ""
+                    event_original = e.get("event.original") or ""
+                    # Пока считаем, что source_type = event_provider
+                    source_type = event_provider
+
+                    rows.append(
+                        (
+                            event_provider,
+                            event_category,
+                            event_type,
+                            src_ip,
+                            event_original,
+                            source_type,
+                        )
                     )
-                    for e in events_to_insert
-                ]
+
                 try:
                     ch.execute(
                         """
-                        INSERT INTO siem.events (event_provider, event_category, event_type, src_ip, event_original)
+                        INSERT INTO siem.events
+                        (event_provider, event_category, event_type, src_ip, event_original, source_type)
                         VALUES
                         """,
                         rows,
