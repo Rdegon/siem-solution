@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Venv
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Logs
+logs/
+*.log
+
+# Env
+.env
+*.env.local
+
+# Data / dumps / backups
+*.dump
+*.bak
+*.backup
+*.tar
+*.tar.gz
+*.zip
+
+# Coverage / test
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Misc
+*.swp
+*.swo
+.DS_Store
