@@ -49,6 +49,10 @@ class BatchCorrWorker:
         )
 
     def _load_rules(self) -> List[Tuple[int, str, int, str]]:
+        """
+        Возвращает список включённых правил:
+          (id, name, window_s, sql_template)
+        """
         assert self._client is not None
         rows = self._client.execute(
             """
