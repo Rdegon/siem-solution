@@ -37,7 +37,7 @@ SELECT
     ''meta:rule_1'' AS entity_key,
     count(*) AS hits,
     toJSONString(map(
-        ''rule_id'', 2001,
+        ''rule_id'', toString(2001),
         ''rule_name'', ''batch_meta_test_threshold_http'',
         ''description'', ''Meta batch rule over alerts_raw for rule_id=1''
     )) AS context_json,
