@@ -9,7 +9,7 @@
       * при достижении threshold за window_s -> пишет алерт в siem.alerts_raw.
 
 Для простоты:
-  - используем время из времени обработки (time.time()), а не timestamp из события.
+  - используем время обработки (time.time()), а не ts из события.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from clickhouse_driver import Client
@@ -56,8 +57,9 @@ class StreamCorrWorker:
             send_receive_timeout=self._settings.ch_timeout_secs,
         )
 
-        # Создаём consumer group, если его ещё нет
         assert self._redis is not None
+
+        # Создаём consumer group, если его ещё нет
         try:
             await self._redis.xgroup_create(
                 name=self._settings.filtered_stream_key,
@@ -75,7 +77,6 @@ class StreamCorrWorker:
                 },
             )
         except Exception as exc:  # noqa: BLE001
-            # Если already exists, Redis вернёт BUSYGROUP -> это не ошибка
             if "BUSYGROUP" in str(exc):
                 logger.info(
                     "Redis consumer group already exists",
@@ -153,7 +154,7 @@ class StreamCorrWorker:
             events_processed = 0
             alerts_created = 0
 
-            for stream_key, messages in resp:
+            for _, messages in resp:
                 for msg_id, fields in messages:
                     events_processed += 1
                     processed_ids.append(msg_id)
@@ -171,12 +172,15 @@ class StreamCorrWorker:
                         if not entity_key:
                             continue
 
-                        if self._check_threshold_and_should_alert(rule, entity_key, msg_id, now):
-                            alert_row = self._build_alert_row(rule, entity_key, now)
-                            alerts_to_insert.append(alert_row)
+                        should_alert, hits = await self._check_threshold_and_should_alert(
+                            rule, entity_key, msg_id, now
+                        )
+                        if should_alert:
+                            alerts_to_insert.append(
+                                self._build_alert_row(rule, entity_key, now, hits)
+                            )
                             alerts_created += 1
 
-            # Вставка алертов в ClickHouse
             if alerts_to_insert:
                 try:
                     ch.execute(
@@ -208,7 +212,6 @@ class StreamCorrWorker:
                         },
                     )
 
-            # ACK всех обработанных сообщений
             if processed_ids:
                 try:
                     await redis.xack(
@@ -244,17 +247,17 @@ class StreamCorrWorker:
     def _redis_key_last_alert(self, rule_id: int, entity_key: str) -> str:
         return f"siem:stream_corr:last_alert:{rule_id}:{entity_key}"
 
-    def _check_threshold_and_should_alert(
+    async def _check_threshold_and_should_alert(
         self,
         rule: StreamCorrRule,
         entity_key: str,
         msg_id: str,
         now: float,
-    ) -> bool:
+    ) -> Tuple[bool, int]:
         """
         Обновляет ZSET с событиями и проверяет достижение threshold.
 
-        Возвращает True, если нужно сгенерировать новый алерт.
+        Возвращает (нужно_алертить, текущее_количество_событий_в_окне).
         """
         assert self._redis is not None
         redis = self._redis
@@ -264,41 +267,35 @@ class StreamCorrWorker:
 
         window_start = now - rule.window_s
 
-        # Добавляем текущее событие в ZSET
-        # Используем unix timestamp в секундах как score, msg_id как member
-        score = now
-        pipe = redis.pipeline()
-        pipe.zadd(zkey, {msg_id: score})
-        pipe.zremrangebyscore(zkey, "-inf", window_start)
-        pipe.zcard(zkey)
-        pipe.get(last_alert_key)
-        results = asyncio.get_event_loop().run_until_complete(pipe.execute())  # type: ignore[call-arg]
-
-        current_count = int(results[2])
-        last_alert_raw = results[3]
+        await redis.zadd(zkey, {msg_id: now})
+        await redis.zremrangebyscore(zkey, "-inf", window_start)
+        current_count = int(await redis.zcard(zkey))
+        last_alert_raw = await redis.get(last_alert_key)
         last_alert_ts = float(last_alert_raw) if last_alert_raw is not None else 0.0
 
         if current_count < rule.threshold:
-            return False
+            return False, current_count
 
-        # Если с последнего алерта прошло меньше окна, не алертим снова
         if last_alert_ts and (now - last_alert_ts) < rule.window_s:
-            return False
+            return False, current_count
 
-        # Обновляем время последнего алерта
-        asyncio.get_event_loop().run_until_complete(redis.set(last_alert_key, str(now)))  # type: ignore[arg-type]
+        await redis.set(last_alert_key, str(now))
+        return True, current_count
 
-        return True
-
-    def _build_alert_row(self, rule: StreamCorrRule, entity_key: str, now: float) -> Tuple[Any, ...]:
+    def _build_alert_row(
+        self,
+        rule: StreamCorrRule,
+        entity_key: str,
+        now: float,
+        hits: int,
+    ) -> Tuple[Any, ...]:
         """
         Формирует строку для вставки в siem.alerts_raw.
-        Для простоты ts_first/ts_last считаем "текущее окно" = [now - window_s, now].
+        ts_first/ts_last считаем как [now - window_s, now].
         """
-        ts = int(now)
-        # DateTime в ClickHouse ожидает UNIX timestamp (int) -> драйвер сам сконвертит
-        ts_first = ts - int(rule.window_s)
-        ts_last = ts
+        ts_dt = datetime.fromtimestamp(now, tz=timezone.utc)
+        ts_first_dt = datetime.fromtimestamp(now - rule.window_s, tz=timezone.utc)
+        ts_last_dt = ts_dt
 
         alert_id = str(uuid.uuid4())
         context = {
@@ -307,23 +304,20 @@ class StreamCorrWorker:
             "description": rule.description,
         }
 
-        # hits мы пока не знаем точно (требовало бы читать ZSET) -> используем threshold
-        hits = rule.threshold
-
         return (
-            ts,                 # ts
-            alert_id,           # alert_id
-            rule.id,            # rule_id
-            rule.name,          # rule_name
-            rule.severity,      # severity
-            ts_first,           # ts_first
-            ts_last,            # ts_last
-            rule.window_s,      # window_s
-            entity_key,         # entity_key
-            hits,               # hits
+            ts_dt,                         # ts
+            alert_id,                      # alert_id
+            rule.id,                       # rule_id
+            rule.name,                     # rule_name
+            rule.severity,                 # severity
+            ts_first_dt,                   # ts_first
+            ts_last_dt,                    # ts_last
+            rule.window_s,                 # window_s
+            entity_key,                    # entity_key
+            hits,                          # hits
             json.dumps(context, ensure_ascii=False),  # context_json
-            "stream",           # source
-            "open",             # status
+            "stream",                      # source
+            "open",                        # status
         )
 
 

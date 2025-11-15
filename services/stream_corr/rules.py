@@ -31,7 +31,7 @@ class StreamCorrRule:
     window_s: int
     threshold: int
     expr_text: str
-    expr_ast: Optional[Tuple]
+    expr_ast: Optional[Tuple[Any, ...]]
     entity_field: str
 
 
@@ -79,7 +79,7 @@ def load_stream_rules(settings: StreamCorrSettings) -> List[StreamCorrRule]:
             entity_field,
         ) = row
 
-        expr_ast: Optional[Tuple] = None
+        expr_ast: Optional[Tuple[Any, ...]] = None
         if expr:
             try:
                 expr_ast = parse_expr(expr)
