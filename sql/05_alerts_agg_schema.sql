@@ -2,7 +2,9 @@
 -- Таблица агрегированных алертов siem.alerts_agg
 -- и базовая таблица правил агрегации siem.alert_agg_rules.
 
-CREATE TABLE IF NOT EXISTS siem.alerts_agg
+DROP TABLE IF EXISTS siem.alerts_agg;
+
+CREATE TABLE siem.alerts_agg
 (
     ts              DateTime DEFAULT now(),              -- время пересчёта/обновления группы
     agg_id          UUID,                                -- уникальный ID агрегата

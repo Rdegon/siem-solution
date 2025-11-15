@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 from clickhouse_driver import Client
 
@@ -20,9 +19,7 @@ from .logging_conf import configure_logging
 logger = logging.getLogger(__name__)
 
 
-AGG_SQL = """
-TRUNCATE TABLE siem.alerts_agg;
-
+AGG_INSERT_SQL = """
 INSERT INTO siem.alerts_agg
 (
     ts,
@@ -54,7 +51,7 @@ SELECT
     toJSONString(arraySlice(groupArray(context_json), 1, 3)) AS samples_json,
     if(max(status) = 'open', 'open', 'closed') AS status
 FROM siem.alerts_raw
-GROUP BY rule_id, entity_key;
+GROUP BY rule_id, entity_key
 """
 
 
@@ -89,10 +86,13 @@ class AlertAggWorker:
         assert self._client is not None
         client = self._client
 
-        # Выполняем TRUNCATE + INSERT SELECT
-        client.execute(AGG_SQL)
+        # 1. Полностью очищаем alerts_agg
+        client.execute("TRUNCATE TABLE siem.alerts_agg")
 
-        # Считаем количество групп для логов
+        # 2. Пересчитываем агрегаты
+        client.execute(AGG_INSERT_SQL)
+
+        # 3. Считаем количество групп для логов
         rows = client.execute("SELECT count() FROM siem.alerts_agg")
         groups_count = int(rows[0][0]) if rows else 0
         return groups_count
