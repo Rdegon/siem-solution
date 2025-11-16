@@ -14,8 +14,13 @@ templates = Jinja2Templates(directory="app/templates")
 @router.get("/alerts_agg", include_in_schema=False)
 async def alerts_agg_page(
     request: Request,
-    user: CurrentUser = Depends(),
+    user: CurrentUser,
 ):
+    """
+    Страница агрегированных алертов.
+
+    Требует аутентифицированного пользователя (CurrentUser).
+    """
     alerts = fetch_alerts_agg(limit=200)
     return templates.TemplateResponse(
         "alerts_agg.html",
@@ -31,8 +36,11 @@ async def alerts_agg_page(
 @router.get("/alerts_raw", include_in_schema=False)
 async def alerts_raw_page(
     request: Request,
-    user: CurrentUser = Depends(),
+    user: CurrentUser,
 ):
+    """
+    Страница сырых алертов.
+    """
     alerts = fetch_alerts_raw(limit=200)
     return templates.TemplateResponse(
         "alerts_raw.html",

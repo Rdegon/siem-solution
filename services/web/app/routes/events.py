@@ -15,8 +15,11 @@ templates = Jinja2Templates(directory="app/templates")
 @router.get("/events", include_in_schema=False)
 async def events_page(
     request: Request,
-    user: CurrentUser = Depends(),
+    user: CurrentUser,
 ):
+    """
+    Страница событий (таблица + график).
+    """
     events = fetch_events(limit=200)
     return templates.TemplateResponse(
         "events.html",
@@ -31,7 +34,11 @@ async def events_page(
 
 @router.get("/api/events_timeseries", include_in_schema=False)
 async def events_timeseries_api(
-    _: CurrentUser = Depends(),
+    user: CurrentUser,
 ):
+    """
+    API для таймсерии events per minute (последние 60 минут).
+    Требует аутентификации.
+    """
     data = fetch_events_timeseries(minutes=60)
     return JSONResponse(data)
