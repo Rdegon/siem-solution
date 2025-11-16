@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Сырые алерты{% endblock %}
+
+{% block content %}
+<h2>Сырые алерты (alerts_raw)</h2>
+<p>Показаны последние {{ alerts|length }} алертов.</p>
+<table>
+    <thead>
+    <tr>
+        <th>ts_first</th>
+        <th>ts_last</th>
+        <th>rule_id</th>
+        <th>rule_name</th>
+        <th>severity</th>
+        <th>entity_key</th>
+        <th>hits</th>
+        <th>source</th>
+        <th>status</th>
+        <th>context_json</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for a in alerts %}
+        <tr>
+            <td>{{ a.ts_first }}</td>
+            <td>{{ a.ts_last }}</td>
+            <td>{{ a.rule_id }}</td>
+            <td>{{ a.rule_name }}</td>
+            <td>
+              <span class="badge badge-{{ a.severity }}">
+                {{ a.severity }}
+              </span>
+            </td>
+            <td>{{ a.entity_key }}</td>
+            <td>{{ a.hits }}</td>
+            <td>{{ a.source }}</td>
+            <td>{{ a.status }}</td>
+            <td><code>{{ a.context_json }}</code></td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

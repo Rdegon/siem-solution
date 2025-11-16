@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Агрегированные алерты{% endblock %}
+
+{% block content %}
+<h2>Агрегированные алерты (alerts_agg)</h2>
+<p>Показаны последние {{ alerts|length }} групп алертов.</p>
+<table>
+    <thead>
+    <tr>
+        <th>ts_first</th>
+        <th>ts_last</th>
+        <th>rule_id</th>
+        <th>rule_name</th>
+        <th>severity_agg</th>
+        <th>group_key_json</th>
+        <th>count_alerts</th>
+        <th>unique_entities</th>
+        <th>status</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for a in alerts %}
+        <tr>
+            <td>{{ a.ts_first }}</td>
+            <td>{{ a.ts_last }}</td>
+            <td>{{ a.rule_id }}</td>
+            <td>{{ a.rule_name }}</td>
+            <td>
+                <span class="badge badge-{{ a.severity_agg }}">
+                  {{ a.severity_agg }}
+                </span>
+            </td>
+            <td><code>{{ a.group_key_json }}</code></td>
+            <td>{{ a.count_alerts }}</td>
+            <td>{{ a.unique_entities }}</td>
+            <td>{{ a.status }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

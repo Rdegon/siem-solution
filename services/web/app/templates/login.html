@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>SIEM Web — Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+               margin: 0; background-color: #0f172a; color: #e5e7eb; }
+        .center { display: flex; align-items: center; justify-content: center; height: 100vh; }
+        .card { background-color: #020617; padding: 24px; border-radius: 12px;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.6); width: 320px; }
+        h1 { margin-top: 0; font-size: 18px; margin-bottom: 16px; }
+        label { font-size: 13px; display: block; margin-bottom: 4px; }
+        input[type="text"], input[type="password"] {
+            width: 100%; padding: 8px; margin-bottom: 12px;
+            border-radius: 6px; border: 1px solid #1f2937; background-color: #020617; color: #e5e7eb;
+        }
+        button { width: 100%; padding: 8px; border-radius: 6px; border: none;
+                 background-color: #22c55e; color: #020617; font-weight: 600; cursor: pointer; }
+        button:hover { background-color: #16a34a; }
+        .hint { font-size: 12px; color: #9ca3af; margin-top: 8px; }
+    </style>
+</head>
+<body>
+<div class="center">
+    <div class="card">
+        <h1>SIEM Web Login</h1>
+        <form method="post" action="/auth/login">
+            <label for="username">Пользователь</label>
+            <input id="username" name="username" type="text" autocomplete="username">
+            <label for="password">Пароль</label>
+            <input id="password" name="password" type="password" autocomplete="current-password">
+            <input type="hidden" name="grant_type" value="">
+            <button type="submit">Войти</button>
+        </form>
+        <div class="hint">
+            Админ из env: SIEM_ADMIN_DEFAULT_USER / SIEM_ADMIN_DEFAULT_PASSWORD
+        </div>
+    </div>
+</div>
+</body>
+</html>

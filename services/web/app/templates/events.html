@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}События{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<h2>События (events)</h2>
+
+<div class="chart-card">
+    <h3>Events per minute (последние 60 минут)</h3>
+    <div id="events_chart" style="width: 100%; height: 260px;"></div>
+</div>
+
+<p>Показаны последние {{ events|length }} событий.</p>
+<table>
+    <thead>
+    <tr>
+        <th>ts</th>
+        <th>event_id</th>
+        <th>category</th>
+        <th>subcategory</th>
+        <th>src_ip</th>
+        <th>dst_ip</th>
+        <th>src_port</th>
+        <th>dst_port</th>
+        <th>device</th>
+        <th>log_source</th>
+        <th>severity</th>
+        <th>message</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for e in events %}
+        <tr>
+            <td>{{ e.ts }}</td>
+            <td>{{ e.event_id }}</td>
+            <td>{{ e.category }}</td>
+            <td>{{ e.subcategory }}</td>
+            <td>{{ e.src_ip }}</td>
+            <td>{{ e.dst_ip }}</td>
+            <td>{{ e.src_port }}</td>
+            <td>{{ e.dst_port }}</td>
+            <td>{{ e.device_vendor }} {{ e.device_product }}</td>
+            <td>{{ e.log_source }}</td>
+            <td>{{ e.severity }}</td>
+            <td>{{ e.message }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<script>
+    async function loadEventsTimeseries() {
+        try {
+            const resp = await fetch('/api/events_timeseries');
+            if (!resp.ok) {
+                console.error('Failed to load timeseries', resp.status);
+                return;
+            }
+            const data = await resp.json();
+            const categories = data.map(p => p.ts_minute);
+            const values = data.map(p => p.cnt);
+
+            const chartDom = document.getElementById('events_chart');
+            const myChart = echarts.init(chartDom);
+            const option = {
+                tooltip: { trigger: 'axis' },
+                xAxis: { type: 'category', data: categories },
+                yAxis: { type: 'value' },
+                series: [{
+                    type: 'line',
+                    smooth: true,
+                    data: values
+                }]
+            };
+            myChart.setOption(option);
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    loadEventsTimeseries();
+</script>
+{% endblock %}
