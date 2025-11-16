@@ -9,8 +9,7 @@ JWT-аутентификация и базовый RBAC.
 
 Роли:
 - "admin": полный доступ (в том числе к admin-разделам).
-В дальнейшем можно добавить хранение пользователей/ролей в ClickHouse,
-но сейчас делаем минимальный рабочий вариант.
+В дальнейшем можно добавить хранение пользователей/ролей в ClickHouse.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal, Optional
 
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -99,7 +98,7 @@ def decode_access_token(token: str) -> User:
 def get_token_from_request(request: Request) -> Optional[str]:
     """
     Достаём токен из cookie 'access_token'.
-    Можно расширить до Authorization: Bearer.
+    При необходимости можно расширить до Authorization: Bearer.
     """
     token = request.cookies.get("access_token")
     if not token:

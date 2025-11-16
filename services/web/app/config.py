@@ -19,6 +19,7 @@ app.config
 - SIEM_WEB_BASE_URL
 
 - SIEM_JWT_SECRET
+- SIEM_JWT_EXPIRES_MINUTES
 - SIEM_ADMIN_DEFAULT_USER
 - SIEM_ADMIN_DEFAULT_PASSWORD
 """
@@ -31,10 +32,13 @@ from typing import Literal
 
 
 class ConfigError(RuntimeError):
-    pass
+    """Ошибка загрузки конфигурации из окружения."""
 
 
 def _get_env(name: str, default: str | None = None) -> str:
+    """
+    Получить переменную окружения или упасть с понятной ошибкой.
+    """
     value = os.getenv(name, default)
     if value is None:
         raise ConfigError(f"Required environment variable {name} is not set")
@@ -96,7 +100,9 @@ def load_config() -> WebConfig:
     try:
         bind_port = int(bind_port_str)
     except ValueError as exc:
-        raise ConfigError(f"SIEM_WEB_BIND_PORT must be integer, got: {bind_port_str!r}") from exc
+        raise ConfigError(
+            f"SIEM_WEB_BIND_PORT must be integer, got: {bind_port_str!r}"
+        ) from exc
 
     base_url = _get_env("SIEM_WEB_BASE_URL", f"http://{bind_host}:{bind_port}")
 
@@ -137,5 +143,5 @@ def load_config() -> WebConfig:
     )
 
 
-# Глобальный синглтон-конфиг, инициализируется при старте приложения
+# Глобальный singleton, инициализируется при импорте модуля
 CONFIG = load_config()
