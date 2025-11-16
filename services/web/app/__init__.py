@@ -1,5 +1,11 @@
 """
-Web UI application package.
+app package
+-----------
+Пакет SIEM Web UI.
 
-Использует конфиг из переменных окружения (SIEM_*) через app.config.
+Содержит:
+- config: загрузка конфигурации из окружения (SIEM_*).
+- security: JWT-аутентификация и базовый RBAC.
+- deps: ClickHouse-клиент и вспомогательные функции.
+- routes: набор маршрутов FastAPI.
 """

@@ -1,3 +1,3 @@
 """
-Маршруты Web UI.
+Маршруты Web UI (alerts, auth, events, health, root).
 """
