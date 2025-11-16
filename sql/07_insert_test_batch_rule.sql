@@ -1,8 +1,6 @@
 -- sql/07_insert_test_batch_rule.sql
 -- Тестовое batch-правило: мета-алерт по rule_id=1 в siem.alerts_raw.
--- ВАЖНО: никаких агрегатных функций в WHERE.
--- Фильтруем по полю ts (обычное время алерта),
--- а ts_first/ts_last считаем как агрегаты только в SELECT.
+-- Без агрегатов в WHERE: окно по обычному полю ts.
 
 INSERT INTO siem.correlation_rules_batch
     (id, name, description, enabled, severity, window_s, sql_template)
