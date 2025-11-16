@@ -74,7 +74,7 @@ def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
         FROM siem.alerts_raw
         ORDER BY ts_last DESC
         LIMIT %(limit)s
-        ""`,
+        """,
         parameters={"limit": limit},
     ).named_results()
     return [dict(r) for r in rows]
