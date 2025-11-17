@@ -14,7 +14,7 @@ from .config import CONFIG
 @lru_cache(maxsize=1)
 def get_ch_client() -> clickhouse_connect.driver.Client:
     """
-    Возвращает singleton-клиент ClickHouse, настроенный по CONFIG.ch.
+    Singleton-клиент ClickHouse, настроенный по CONFIG.ch.
     Работает через HTTP-интерфейс (порт SIEM_CH_PORT, обычно 8123).
     """
     ch = CONFIG.ch
@@ -24,7 +24,6 @@ def get_ch_client() -> clickhouse_connect.driver.Client:
         username=ch.user,
         password=ch.password,
         database=ch.db,
-        connect_timeout=ch.timeout,
     )
     return client
 
@@ -47,8 +46,7 @@ def ch_ping() -> bool:
 
 def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
     """
-    Возвращает агрегированные алерты из siem.alerts_agg
-    для отображения на /alerts_agg.
+    Возвращает агрегированные алерты из siem.alerts_agg для /alerts_agg.
     """
     client = get_ch_client()
     query = """
@@ -175,8 +173,7 @@ def fetch_events(limit: int = 200) -> List[Dict[str, Any]]:
 def fetch_events_timeseries(minutes: int = 60) -> List[Dict[str, Any]]:
     """
     Таймсерия events per minute за последние N минут по таблице siem.events.
-    Возвращает список словарей:
-      {"ts_minute": "YYYY-MM-DD HH:MM:SS", "cnt": int}
+    Формат: {"ts_minute": "YYYY-MM-DD HH:MM:SS", "cnt": int}
     """
     client = get_ch_client()
     query = """
