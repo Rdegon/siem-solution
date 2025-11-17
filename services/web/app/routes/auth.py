@@ -85,3 +85,35 @@ async def logout(request: Request, user: CurrentUser):
     )
     response.delete_cookie("access_token")
     return response
+
+# ───────── Temporary stub for get_current_user (to unblock web UI) ─────────
+
+async def get_current_user(request):
+    """
+    ВРЕМЕННАЯ заглушка для зависимостей Depends(get_current_user).
+
+    Всегда возвращает фиктивного пользователя "admin".
+    TODO: позже заменить на реальную аутентификацию (JWT/куки/сессии).
+    """
+    return {
+        "username": "admin",
+        "display_name": "Admin (stub)",
+        "roles": ["admin"],
+    }
+
+
+# ───────── Override stub for get_current_user to avoid 422 on "request" ─────────
+
+async def get_current_user():
+    """
+    Временная заглушка для Depends(get_current_user).
+
+    Никаких параметров не принимает, чтобы FastAPI не требовал query-параметр
+    "request". Всегда возвращает фиктивного администратора.
+    """
+    return {
+        "username": "admin",
+        "display_name": "Admin (stub)",
+        "roles": ["admin"],
+    }
+

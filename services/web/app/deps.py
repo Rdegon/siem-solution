@@ -49,7 +49,8 @@ def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
     Возвращает агрегированные алерты из siem.alerts_agg для /alerts_agg.
     """
     client = get_ch_client()
-    query = """
+    limit = int(limit)
+    query = f"""
         SELECT
             ts_first,
             ts_last,
@@ -63,7 +64,7 @@ def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
         ORDER BY ts_last DESC
         LIMIT {limit}
     """
-    result = client.query(query, parameters={"limit": limit})
+    result = client.query(query)
     rows: List[Dict[str, Any]] = []
     for r in result.named_results():
         rows.append(
@@ -86,7 +87,8 @@ def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
     Возвращает сырые алерты из siem.alerts_raw для /alerts_raw.
     """
     client = get_ch_client()
-    query = """
+    limit = int(limit)
+    query = f"""
         SELECT
             ts_first,
             ts_last,
@@ -101,7 +103,7 @@ def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
         ORDER BY ts_last DESC
         LIMIT {limit}
     """
-    result = client.query(query, parameters={"limit": limit})
+    result = client.query(query)
     rows: List[Dict[str, Any]] = []
     for r in result.named_results():
         rows.append(
@@ -134,7 +136,8 @@ def fetch_events(limit: int = 200) -> List[Dict[str, Any]]:
       severity, message.
     """
     client = get_ch_client()
-    query = """
+    limit = int(limit)
+    query = f"""
         SELECT
             ts,
             event_id,
@@ -153,7 +156,7 @@ def fetch_events(limit: int = 200) -> List[Dict[str, Any]]:
         ORDER BY ts DESC
         LIMIT {limit}
     """
-    result = client.query(query, parameters={"limit": limit})
+    result = client.query(query)
     rows: List[Dict[str, Any]] = []
     for r in result.named_results():
         rows.append(
@@ -183,7 +186,8 @@ def fetch_events_timeseries(minutes: int = 60) -> List[Dict[str, Any]]:
       {"ts_minute": "YYYY-MM-DD HH:MM:SS", "cnt": int}
     """
     client = get_ch_client()
-    query = """
+    minutes = int(minutes)
+    query = f"""
         SELECT
             toStartOfMinute(ts) AS ts_minute,
             count() AS cnt
@@ -192,7 +196,7 @@ def fetch_events_timeseries(minutes: int = 60) -> List[Dict[str, Any]]:
         GROUP BY ts_minute
         ORDER BY ts_minute
     """
-    result = client.query(query, parameters={"minutes": minutes})
+    result = client.query(query)
     rows: List[Dict[str, Any]] = []
     for ts_minute, cnt in result.result_rows:
         rows.append(

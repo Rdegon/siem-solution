@@ -1,13 +1,9 @@
-from __future__ import annotations
-
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
-# Импорт из того же namespace, который использует main.py
-from app.routes.auth import get_current_user  # type: ignore[import]
-
+from app.routes.auth import get_current_user
 from ..deps import fetch_alerts_agg, fetch_alerts_raw
 from ..templates import templates
 
