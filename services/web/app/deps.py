@@ -126,6 +126,12 @@ def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
 def fetch_events(limit: int = 200) -> List[Dict[str, Any]]:
     """
     Возвращает последние события из siem.events для страницы /events.
+    Ожидается схема:
+      ts, event_id, category, subcategory,
+      src_ip (IPv4), dst_ip (IPv4),
+      src_port, dst_port,
+      device_vendor, device_product, log_source,
+      severity, message.
     """
     client = get_ch_client()
     query = """
@@ -173,7 +179,8 @@ def fetch_events(limit: int = 200) -> List[Dict[str, Any]]:
 def fetch_events_timeseries(minutes: int = 60) -> List[Dict[str, Any]]:
     """
     Таймсерия events per minute за последние N минут по таблице siem.events.
-    Формат: {"ts_minute": "YYYY-MM-DD HH:MM:SS", "cnt": int}
+    Формат:
+      {"ts_minute": "YYYY-MM-DD HH:MM:SS", "cnt": int}
     """
     client = get_ch_client()
     query = """
