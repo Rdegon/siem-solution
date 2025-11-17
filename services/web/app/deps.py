@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from functools import lru_cache
 from typing import Any, Dict, List
 
@@ -16,6 +15,7 @@ from .config import CONFIG
 def get_ch_client() -> clickhouse_connect.driver.Client:
     """
     Возвращает singleton-клиент ClickHouse, настроенный по CONFIG.ch.
+    Работает через HTTP-интерфейс (порт SIEM_CH_PORT, обычно 8123).
     """
     ch = CONFIG.ch
     client = clickhouse_connect.get_client(
@@ -24,7 +24,6 @@ def get_ch_client() -> clickhouse_connect.driver.Client:
         username=ch.user,
         password=ch.password,
         database=ch.db,
-        secure=ch.secure,
         connect_timeout=ch.timeout,
     )
     return client
@@ -177,7 +176,7 @@ def fetch_events_timeseries(minutes: int = 60) -> List[Dict[str, Any]]:
     """
     Таймсерия events per minute за последние N минут по таблице siem.events.
     Возвращает список словарей:
-      {"ts_minute": "YYYY-MM-DD HH:MM:00", "cnt": int}
+      {"ts_minute": "YYYY-MM-DD HH:MM:SS", "cnt": int}
     """
     client = get_ch_client()
     query = """
@@ -192,7 +191,6 @@ def fetch_events_timeseries(minutes: int = 60) -> List[Dict[str, Any]]:
     result = client.query(query, parameters={"minutes": minutes})
     rows: List[Dict[str, Any]] = []
     for ts_minute, cnt in result.result_rows:
-        # приводим datetime к строке, чтобы JSONResponse не ругался
         rows.append(
             {
                 "ts_minute": ts_minute.strftime("%Y-%m-%d %H:%M:%S"),
