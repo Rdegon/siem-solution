@@ -1,53 +1,61 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.templating import Jinja2Templates
+from typing import Any, Dict, List, Optional
 
-from ..config import CONFIG
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import HTMLResponse
+
+from ..auth import get_current_user
 from ..deps import fetch_alerts_agg, fetch_alerts_raw
-from ..security import CurrentUser
+from ..templates import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
 
 
-@router.get("/alerts_agg", include_in_schema=False)
-async def alerts_agg_page(
-    request: Request,
-    user: CurrentUser,
-):
-    """
-    Страница агрегированных алертов.
-
-    Требует аутентифицированного пользователя (CurrentUser).
-    """
-    alerts = fetch_alerts_agg(limit=200)
-    return templates.TemplateResponse(
-        "alerts_agg.html",
-        {
-            "request": request,
-            "user": user,
-            "alerts": alerts,
-            "base_url": CONFIG.base_url,
-        },
-    )
-
-
-@router.get("/alerts_raw", include_in_schema=False)
+@router.get("/alerts_raw", response_class=HTMLResponse)
 async def alerts_raw_page(
     request: Request,
-    user: CurrentUser,
-):
-    """
-    Страница сырых алертов.
-    """
-    alerts = fetch_alerts_raw(limit=200)
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> HTMLResponse:
+    error: Optional[str] = None
+    alerts: List[Dict[str, Any]] = []
+
+    try:
+        alerts = fetch_alerts_raw(limit=200)
+    except Exception as exc:  # noqa: BLE001
+        # Логика максимально простая: показываем сообщение на странице и не роняем 500.
+        error = f"Ошибка обращения к ClickHouse при чтении сырых алертов: {exc!s}"
+
     return templates.TemplateResponse(
         "alerts_raw.html",
         {
             "request": request,
             "user": user,
             "alerts": alerts,
-            "base_url": CONFIG.base_url,
+            "error": error,
+        },
+    )
+
+
+@router.get("/alerts_agg", response_class=HTMLResponse)
+async def alerts_agg_page(
+    request: Request,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> HTMLResponse:
+    error: Optional[str] = None
+    alerts_agg: List[Dict[str, Any]] = []
+
+    try:
+        alerts_agg = fetch_alerts_agg(limit=200)
+    except Exception as exc:  # noqa: BLE001
+        error = f"Ошибка обращения к ClickHouse при чтении агрегированных алертов: {exc!s}"
+
+    return templates.TemplateResponse(
+        "alerts_agg.html",
+        {
+            "request": request,
+            "user": user,
+            "alerts_agg": alerts_agg,
+            "error": error,
         },
     )
