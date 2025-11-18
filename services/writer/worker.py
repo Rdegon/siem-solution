@@ -1,208 +1,266 @@
 """
-/home/siem/siem-solution/services/writer/worker.py
+SIEM Writer service.
 
-Writer-сервис:
-  - Читает события из Redis Stream `siem:filtered` (XREAD).
-  - Для каждого события:
-      * извлекает UEM-поля (event.provider, event.category, event.type, source.ip,
-        event.original, tags);
-      * формирует батч записей и вставляет в ClickHouse siem.events.
-  - Хранит последний обработанный ID в Redis-ключе `siem:writer:last_id`.
+Читает нормализованные + отфильтрованные события из Redis Stream
+`siem:filtered` и пишет их в таблицу ClickHouse `siem.events`:
 
-Идемпотентность:
-  - При старте читает last_id из Redis, продолжает с него.
-  - После успешной вставки батча обновляет last_id в Redis.
+  ts         DateTime
+  event_id   String
+  category   String
+  subcategory String
+  src_ip     IPv4 (как UInt32)
+  dst_ip     IPv4 (как UInt32)
+  severity   String
+  message    String
+
+Настройки берутся из переменных окружения SIEM_*.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+import os
+import signal
+import sys
+import uuid
+import ipaddress
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Tuple
 
-from clickhouse_driver import Client
-from redis.asyncio import Redis
+import redis.asyncio as redis
+import clickhouse_connect
 
-from .config import WriterSettings
-from .logging_conf import configure_logging
+STREAM_KEY_FILTERED = "siem:filtered"
+WRITER_LAST_ID_KEY = "siem:writer:last_id"
 
-logger = logging.getLogger(__name__)
+
+@dataclass
+class WriterSettings:
+    # Redis
+    redis_host: str = os.getenv("SIEM_REDIS_HOST", "127.0.0.1")
+    redis_port: int = int(os.getenv("SIEM_REDIS_PORT", "6379"))
+    redis_db: int = int(os.getenv("SIEM_REDIS_DB", "0"))
+    redis_password: str | None = os.getenv("SIEM_REDIS_PASSWORD") or None
+
+    # ClickHouse (HTTP)
+    ch_host: str = os.getenv("SIEM_CH_HOST", "127.0.0.1")
+    ch_port: int = int(os.getenv("SIEM_CH_PORT", "8123"))
+    ch_user: str = os.getenv("SIEM_CH_USER", "siem_app")
+    ch_password: str = os.getenv("SIEM_CH_PASSWORD", "")
+    ch_db: str = os.getenv("SIEM_CH_DB", "siem")
+
+    # Writer behaviour
+    batch_size: int = int(os.getenv("SIEM_WRITER_BATCH_SIZE", "200"))
+    poll_interval_ms: int = int(os.getenv("SIEM_WRITER_POLL_INTERVAL_MS", "500"))
+
+
+def _parse_ts(doc: Dict[str, Any]) -> datetime:
+    """Берём время события из ts или @timestamp, иначе now()."""
+    ts_raw = doc.get("ts") or doc.get("@timestamp")
+    if isinstance(ts_raw, str):
+        try:
+            if ts_raw.endswith("Z"):
+                ts_raw = ts_raw.replace("Z", "+00:00")
+            return datetime.fromisoformat(ts_raw).astimezone(timezone.utc)
+        except Exception:
+            pass
+    return datetime.now(timezone.utc)
+
+
+def _ip_to_int(ip_str: str | None) -> int:
+    if not ip_str:
+        return 0
+    try:
+        return int(ipaddress.IPv4Address(ip_str))
+    except Exception:
+        return 0
 
 
 class WriterWorker:
     def __init__(self, settings: WriterSettings) -> None:
-        self._settings = settings
-        self._redis: Optional[Redis] = None
-        self._ch_client: Optional[Client] = None
-        self._last_id: str = "0-0"
+        self.settings = settings
+        self.log = logging.getLogger("siem.writer")
+        self.redis: redis.Redis | None = None
+        self.ch = None
+        self._stopping = False
 
     async def init(self) -> None:
-        """Инициализация Redis, ClickHouse и загрузка last_id."""
-        self._redis = Redis(
-            host=self._settings.redis_host,
-            port=self._settings.redis_port,
-            db=self._settings.redis_db,
-            password=self._settings.redis_password,
-            decode_responses=True,
-        )
-        self._ch_client = Client(
-            host=self._settings.ch_host,
-            port=self._settings.ch_port,
-            user=self._settings.ch_user,
-            password=self._settings.ch_password,
-            database=self._settings.ch_db,
-            send_receive_timeout=self._settings.ch_timeout_secs,
-        )
-
-        # Пробуем прочитать last_id из Redis
-        try:
-            value = await self._redis.get(self._settings.writer_last_id_key)
-            if value:
-                self._last_id = value
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "Failed to load writer last_id from Redis",
-                extra={"extra": {"error": str(exc)}},
-            )
-
-        logger.info(
-            "WriterWorker initialized",
+        self.log.info(
+            "WriterWorker init",
             extra={
-                "extra": {
-                    "filtered_stream": self._settings.filtered_stream_key,
-                    "last_id": self._last_id,
-                    "batch_size": self._settings.batch_size,
-                }
+                "filtered_stream": STREAM_KEY_FILTERED,
+                "batch_size": self.settings.batch_size,
             },
         )
 
-    async def _save_last_id(self) -> None:
-        assert self._redis is not None
-        try:
-            await self._redis.set(self._settings.writer_last_id_key, self._last_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "Failed to save writer last_id to Redis",
-                extra={"extra": {"error": str(exc), "last_id": self._last_id}},
-            )
+        self.redis = redis.Redis(
+            host=self.settings.redis_host,
+            port=self.settings.redis_port,
+            db=self.settings.redis_db,
+            password=self.settings.redis_password,
+            encoding="utf-8",
+            decode_responses=True,
+        )
+
+        self.ch = clickhouse_connect.get_client(
+            host=self.settings.ch_host,
+            port=self.settings.ch_port,
+            username=self.settings.ch_user,
+            password=self.settings.ch_password,
+            database=self.settings.ch_db,
+        )
+
+    async def _load_last_id(self) -> str:
+        assert self.redis is not None
+        last_id = await self.redis.get(WRITER_LAST_ID_KEY)
+        return last_id or "0-0"
+
+    async def _save_last_id(self, last_id: str) -> None:
+        assert self.redis is not None
+        await self.redis.set(WRITER_LAST_ID_KEY, last_id)
+
+    def _build_row(self, fields: Dict[str, Any]) -> Tuple[Any, ...]:
+        """
+        Преобразует запись из Redis Stream в строку для ClickHouse.
+
+        Ожидается, что в fields есть ключ "data" с JSON нормализованного события.
+        """
+        raw = fields.get("data")
+        if raw is None:
+            raise ValueError("Missing 'data' field in stream record")
+
+        doc = json.loads(raw)
+
+        ev = doc.get("event", {}) or {}
+        src = doc.get("source", {}) or {}
+        dst = doc.get("destination", {}) or {}
+
+        ts = _parse_ts(doc)
+        event_id = ev.get("id") or str(uuid.uuid4())
+
+        category = ev.get("category") or doc.get("category") or ""
+        subcategory = ev.get("type") or doc.get("subcategory") or ""
+
+        src_ip_int = _ip_to_int(src.get("ip") or doc.get("src_ip"))
+        dst_ip_int = _ip_to_int(dst.get("ip") or doc.get("dst_ip"))
+
+        severity = (
+            str(ev.get("severity"))
+            if ev.get("severity") is not None
+            else str(doc.get("severity") or "info")
+        )
+
+        message = (
+            doc.get("message")
+            or ev.get("original")
+            or ev.get("message")
+            or doc.get("event_original")
+            or ""
+        )
+
+        return (
+            ts,
+            event_id,
+            category,
+            subcategory,
+            src_ip_int,
+            dst_ip_int,
+            severity,
+            message,
+        )
+
+    def _flush_rows(self, rows: List[Tuple[Any, ...]]) -> None:
+        if not rows:
+            return
+        assert self.ch is not None
+
+        self.ch.insert(
+            "siem.events",
+            rows,
+            column_names=[
+                "ts",
+                "event_id",
+                "category",
+                "subcategory",
+                "src_ip",
+                "dst_ip",
+                "severity",
+                "message",
+            ],
+        )
+        self.log.info(
+            "Writer batch inserted",
+            extra={"rows_inserted": len(rows)},
+        )
 
     async def run(self) -> None:
-        assert self._redis is not None
-        assert self._ch_client is not None
+        assert self.redis is not None
+        last_id = await self._load_last_id()
+        self.log.info("Writer starting", extra={"last_id": last_id})
 
-        redis = self._redis
-        ch = self._ch_client
-
-        while True:
-            try:
-                resp = await redis.xread(
-                    {self._settings.filtered_stream_key: self._last_id},
-                    count=self._settings.batch_size,
-                    block=5_000,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "Redis XREAD failed in writer",
-                    extra={"extra": {"error": str(exc)}},
-                )
-                await asyncio.sleep(1)
-                continue
+        while not self._stopping:
+            streams = {STREAM_KEY_FILTERED: last_id}
+            resp = await self.redis.xread(
+                streams,
+                count=self.settings.batch_size,
+                block=self.settings.poll_interval_ms,
+            )
 
             if not resp:
                 continue
 
-            read_count = 0
-            inserted_count = 0
-            max_id_in_batch: Optional[str] = None
+            _, records = resp[0]
+
             rows: List[Tuple[Any, ...]] = []
+            max_id = last_id
 
-            for stream_key, messages in resp:
-                for msg_id, fields in messages:
-                    read_count += 1
-                    max_id_in_batch = msg_id
-
-                    event = dict(fields)
-
-                    event_provider = event.get("event.provider") or ""
-                    event_category = event.get("event.category") or ""
-                    event_type = event.get("event.type") or ""
-                    src_ip = event.get("source.ip") or ""
-                    event_original = event.get("event.original") or ""
-                    tags = event.get("tags") or ""
-                    source_type = event_provider  # для совместимости
-
-                    rows.append(
-                        (
-                            event_provider,
-                            event_category,
-                            event_type,
-                            src_ip,
-                            event_original,
-                            source_type,
-                            tags,
-                        )
+            for rec_id, fields in records:
+                max_id = rec_id
+                try:
+                    row = self._build_row(fields)
+                    rows.append(row)
+                except Exception as exc:
+                    self.log.exception(
+                        "Failed to build row from record",
+                        extra={"rec_id": rec_id, "fields": fields, "error": str(exc)},
                     )
 
             if rows:
-                try:
-                    ch.execute(
-                        """
-                        INSERT INTO siem.events
-                        (event_provider, event_category, event_type, src_ip, event_original, source_type, tags)
-                        VALUES
-                        """,
-                        rows,
-                    )
-                    inserted_count = len(rows)
+                self._flush_rows(rows)
+                await self._save_last_id(max_id)
+                last_id = max_id
 
-                    # Обновляем last_id только после успешной вставки
-                    if max_id_in_batch is not None:
-                        self._last_id = max_id_in_batch
-                        await self._save_last_id()
+        self.log.info("Writer stopped gracefully")
 
-                    logger.info(
-                        "Writer batch inserted",
-                        extra={
-                            "extra": {
-                                "events_read": read_count,
-                                "rows_inserted": inserted_count,
-                                "last_id": self._last_id,
-                            }
-                        },
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "Failed to insert events into ClickHouse in writer",
-                        extra={
-                            "extra": {
-                                "error": str(exc),
-                                "rows": len(rows),
-                            }
-                        },
-                    )
-
-            else:
-                # На всякий случай логируем факт пустого чтения
-                logger.info(
-                    "Writer batch read no rows",
-                    extra={
-                        "extra": {
-                            "events_read": read_count,
-                            "last_id": self._last_id,
-                        }
-                    },
-                )
+    def stop(self) -> None:
+        self._stopping = True
 
 
 async def main() -> None:
-    configure_logging()
-    settings = WriterSettings.load()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    settings = WriterSettings()
     worker = WriterWorker(settings)
     await worker.init()
+
+    loop = asyncio.get_running_loop()
+
+    def _handle_signal() -> None:
+        worker.stop()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _handle_signal)
+
     await worker.run()
 
 
 if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        sys.exit(0)
