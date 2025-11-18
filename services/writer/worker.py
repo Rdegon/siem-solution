@@ -1,40 +1,18 @@
-"""
-SIEM Writer service.
-
-Читает нормализованные + отфильтрованные события из Redis Stream
-`siem:filtered` и пишет их в таблицу ClickHouse `siem.events`:
-
-  ts         DateTime
-  event_id   String
-  category   String
-  subcategory String
-  src_ip     IPv4 (как UInt32)
-  dst_ip     IPv4 (как UInt32)
-  severity   String
-  message    String
-
-Настройки берутся из переменных окружения SIEM_*.
-"""
-
 from __future__ import annotations
 
 import asyncio
-import json
+import ipaddress
 import logging
 import os
-import signal
-import sys
-import uuid
-import ipaddress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
-import redis.asyncio as redis
-import clickhouse_connect
+from clickhouse_driver import Client
+from redis.asyncio import Redis
+from redis.exceptions import ResponseError
 
-STREAM_KEY_FILTERED = "siem:filtered"
-WRITER_LAST_ID_KEY = "siem:writer:last_id"
+logger = logging.getLogger("siem.writer")
 
 
 @dataclass
@@ -45,201 +23,234 @@ class WriterSettings:
     redis_db: int = int(os.getenv("SIEM_REDIS_DB", "0"))
     redis_password: str | None = os.getenv("SIEM_REDIS_PASSWORD") or None
 
-    # ClickHouse (HTTP)
+    # Stream / consumer group
+    filtered_stream_key: str = os.getenv("SIEM_FILTERED_STREAM_KEY", "siem:filtered")
+    group_name: str = os.getenv("SIEM_WRITER_GROUP", "writer")
+    consumer_name: str = os.getenv("SIEM_WRITER_CONSUMER", "writer-1")
+    batch_size: int = int(os.getenv("SIEM_WRITER_BATCH_SIZE", "100"))
+    block_ms: int = int(os.getenv("SIEM_WRITER_BLOCK_MS", "1000"))
+
+    # ClickHouse
     ch_host: str = os.getenv("SIEM_CH_HOST", "127.0.0.1")
     ch_port: int = int(os.getenv("SIEM_CH_PORT", "8123"))
     ch_user: str = os.getenv("SIEM_CH_USER", "siem_app")
     ch_password: str = os.getenv("SIEM_CH_PASSWORD", "")
     ch_db: str = os.getenv("SIEM_CH_DB", "siem")
-
-    # Writer behaviour
-    batch_size: int = int(os.getenv("SIEM_WRITER_BATCH_SIZE", "200"))
-    poll_interval_ms: int = int(os.getenv("SIEM_WRITER_POLL_INTERVAL_MS", "500"))
+    ch_timeout_secs: int = int(os.getenv("SIEM_CH_TIMEOUT_SECS", "10"))
+    events_table: str = os.getenv("SIEM_EVENTS_TABLE", "siem.events")
 
 
-def _parse_ts(doc: Dict[str, Any]) -> datetime:
-    """Берём время события из ts или @timestamp, иначе now()."""
-    ts_raw = doc.get("ts") or doc.get("@timestamp")
-    if isinstance(ts_raw, str):
-        try:
-            if ts_raw.endswith("Z"):
-                ts_raw = ts_raw.replace("Z", "+00:00")
-            return datetime.fromisoformat(ts_raw).astimezone(timezone.utc)
-        except Exception:
-            pass
-    return datetime.now(timezone.utc)
-
-
-def _ip_to_int(ip_str: str | None) -> int:
-    if not ip_str:
+def ipv4_to_int(ip: str | None) -> int:
+    if not ip:
         return 0
     try:
-        return int(ipaddress.IPv4Address(ip_str))
+        return int(ipaddress.IPv4Address(ip))
     except Exception:
         return 0
 
 
 class WriterWorker:
     def __init__(self, settings: WriterSettings) -> None:
-        self.settings = settings
-        self.log = logging.getLogger("siem.writer")
-        self.redis: redis.Redis | None = None
-        self.ch = None
-        self._stopping = False
+        self._settings = settings
+        self._redis: Redis | None = None
+        self._ch: Client | None = None
 
     async def init(self) -> None:
-        self.log.info(
-            "WriterWorker init",
-            extra={
-                "filtered_stream": STREAM_KEY_FILTERED,
-                "batch_size": self.settings.batch_size,
-            },
-        )
-
-        self.redis = redis.Redis(
-            host=self.settings.redis_host,
-            port=self.settings.redis_port,
-            db=self.settings.redis_db,
-            password=self.settings.redis_password,
-            encoding="utf-8",
+        """Инициализация Redis и ClickHouse, создание consumer group при необходимости."""
+        self._redis = Redis(
+            host=self._settings.redis_host,
+            port=self._settings.redis_port,
+            db=self._settings.redis_db,
+            password=self._settings.redis_password,
             decode_responses=True,
         )
 
-        self.ch = clickhouse_connect.get_client(
-            host=self.settings.ch_host,
-            port=self.settings.ch_port,
-            username=self.settings.ch_user,
-            password=self.settings.ch_password,
-            database=self.settings.ch_db,
+        self._ch = Client(
+            host=self._settings.ch_host,
+            port=self._settings.ch_port,
+            user=self._settings.ch_user,
+            password=self._settings.ch_password,
+            database=self._settings.ch_db,
+            send_receive_timeout=self._settings.ch_timeout_secs,
         )
 
-    async def _load_last_id(self) -> str:
-        assert self.redis is not None
-        last_id = await self.redis.get(WRITER_LAST_ID_KEY)
-        return last_id or "0-0"
+        # Создаём consumer group, если её ещё нет
+        try:
+            await self._redis.xgroup_create(
+                name=self._settings.filtered_stream_key,
+                groupname=self._settings.group_name,
+                id="0-0",
+                mkstream=True,
+            )
+            logger.info(
+                "Created Redis consumer group",
+                extra={
+                    "extra": {
+                        "stream": self._settings.filtered_stream_key,
+                        "group": self._settings.group_name,
+                    }
+                },
+            )
+        except ResponseError as exc:
+            # BUSYGROUP означает "group уже существует" — это не ошибка
+            if "BUSYGROUP" not in str(exc):
+                raise
 
-    async def _save_last_id(self, last_id: str) -> None:
-        assert self.redis is not None
-        await self.redis.set(WRITER_LAST_ID_KEY, last_id)
-
-    def _build_row(self, fields: Dict[str, Any]) -> Tuple[Any, ...]:
-        """
-        Преобразует запись из Redis Stream в строку для ClickHouse.
-
-        Ожидается, что в fields есть ключ "data" с JSON нормализованного события.
-        """
-        raw = fields.get("data")
-        if raw is None:
-            raise ValueError("Missing 'data' field in stream record")
-
-        doc = json.loads(raw)
-
-        ev = doc.get("event", {}) or {}
-        src = doc.get("source", {}) or {}
-        dst = doc.get("destination", {}) or {}
-
-        ts = _parse_ts(doc)
-        event_id = ev.get("id") or str(uuid.uuid4())
-
-        category = ev.get("category") or doc.get("category") or ""
-        subcategory = ev.get("type") or doc.get("subcategory") or ""
-
-        src_ip_int = _ip_to_int(src.get("ip") or doc.get("src_ip"))
-        dst_ip_int = _ip_to_int(dst.get("ip") or doc.get("dst_ip"))
-
-        severity = (
-            str(ev.get("severity"))
-            if ev.get("severity") is not None
-            else str(doc.get("severity") or "info")
+        logger.info(
+            "WriterWorker initialized",
+            extra={
+                "extra": {
+                    "stream": self._settings.filtered_stream_key,
+                    "group": self._settings.group_name,
+                    "consumer": self._settings.consumer_name,
+                    "batch_size": self._settings.batch_size,
+                }
+            },
         )
 
-        message = (
-            doc.get("message")
-            or ev.get("original")
-            or ev.get("message")
-            or doc.get("event_original")
+    def _build_row(self, msg_id: str, fields: Dict[str, str]) -> Tuple[Any, ...]:
+        """
+        Строит строку под таблицу siem.events.
+
+        Ожидаемые поля в записи stream'а:
+          - event.provider
+          - source.ip / destination.ip
+          - event.original (исходное сообщение)
+          - event.category (опц.)
+          - event.type (опц.)
+          - device.vendor / device.product / host.name / log.level и т.п.
+        """
+        now = datetime.now(timezone.utc)
+
+        event_id = fields.get("event_id") or msg_id
+        provider = fields.get("event.provider", "")
+
+        category = fields.get("event.category") or provider or "generic"
+        subcategory = fields.get("event.type") or ""
+
+        src_ip_int = ipv4_to_int(fields.get("source.ip"))
+        dst_ip_int = ipv4_to_int(fields.get("destination.ip"))
+
+        src_port = int(fields.get("source.port", "0") or 0)
+        dst_port = int(fields.get("destination.port", "0") or 0)
+
+        device_vendor = fields.get("device.vendor") or provider
+        device_product = fields.get("device.product") or provider
+
+        log_source = (
+            fields.get("log_source")
+            or fields.get("host.name")
+            or fields.get("source.ip")
             or ""
         )
 
+        severity = (
+            fields.get("event.severity")
+            or fields.get("severity")
+            or fields.get("log.level")
+            or "info"
+        )
+
+        message = fields.get("event.original") or fields.get("message") or ""
+
         return (
-            ts,
+            now,
             event_id,
             category,
             subcategory,
             src_ip_int,
             dst_ip_int,
+            src_port,
+            dst_port,
+            device_vendor,
+            device_product,
+            log_source,
             severity,
             message,
         )
 
-    def _flush_rows(self, rows: List[Tuple[Any, ...]]) -> None:
-        if not rows:
-            return
-        assert self.ch is not None
-
-        self.ch.insert(
-            "siem.events",
-            rows,
-            column_names=[
-                "ts",
-                "event_id",
-                "category",
-                "subcategory",
-                "src_ip",
-                "dst_ip",
-                "severity",
-                "message",
-            ],
-        )
-        self.log.info(
-            "Writer batch inserted",
-            extra={"rows_inserted": len(rows)},
-        )
-
     async def run(self) -> None:
-        assert self.redis is not None
-        last_id = await self._load_last_id()
-        self.log.info("Writer starting", extra={"last_id": last_id})
+        """Основной цикл: читаем из Redis, пишем в ClickHouse."""
+        assert self._redis is not None
+        assert self._ch is not None
 
-        while not self._stopping:
-            streams = {STREAM_KEY_FILTERED: last_id}
-            resp = await self.redis.xread(
-                streams,
-                count=self.settings.batch_size,
-                block=self.settings.poll_interval_ms,
+        redis = self._redis
+        ch = self._ch
+        s = self._settings
+
+        insert_sql = (
+            f"INSERT INTO {s.events_table} "
+            "(ts, event_id, category, subcategory, "
+            " src_ip, dst_ip, src_port, dst_port, "
+            " device_vendor, device_product, log_source, severity, message) "
+            "VALUES"
+        )
+
+        while True:
+            resp = await redis.xreadgroup(
+                groupname=s.group_name,
+                consumername=s.consumer_name,
+                streams={s.filtered_stream_key: ">"},
+                count=s.batch_size,
+                block=s.block_ms,
             )
 
             if not resp:
                 continue
 
-            _, records = resp[0]
-
             rows: List[Tuple[Any, ...]] = []
-            max_id = last_id
+            ids: List[str] = []
 
-            for rec_id, fields in records:
-                max_id = rec_id
-                try:
-                    row = self._build_row(fields)
+            for _stream_name, messages in resp:
+                for msg_id, fields in messages:
+                    try:
+                        row = self._build_row(msg_id, fields)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(
+                            "Failed to build row from record",
+                            extra={
+                                "extra": {
+                                    "error": str(exc),
+                                    "id": msg_id,
+                                    "fields": fields,
+                                }
+                            },
+                        )
+                        # Подтверждаем проблемную запись, чтобы не зависнуть
+                        await redis.xack(s.filtered_stream_key, s.group_name, msg_id)
+                        continue
+
                     rows.append(row)
-                except Exception as exc:
-                    self.log.exception(
-                        "Failed to build row from record",
-                        extra={"rec_id": rec_id, "fields": fields, "error": str(exc)},
-                    )
+                    ids.append(msg_id)
 
-            if rows:
-                self._flush_rows(rows)
-                await self._save_last_id(max_id)
-                last_id = max_id
+            if not rows:
+                continue
 
-        self.log.info("Writer stopped gracefully")
+            try:
+                ch.execute(insert_sql, rows)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Failed to insert rows into ClickHouse",
+                    extra={
+                        "extra": {
+                            "error": str(exc),
+                            "rows": len(rows),
+                        }
+                    },
+                )
+                # Не подтверждаем — попробуем позже
+                continue
 
-    def stop(self) -> None:
-        self._stopping = True
+            if ids:
+                await redis.xack(s.filtered_stream_key, s.group_name, *ids)
+
+            logger.info(
+                "Batch written to ClickHouse",
+                extra={"extra": {"rows": len(rows)}},
+            )
 
 
-async def main() -> None:
+async def _main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -247,20 +258,8 @@ async def main() -> None:
     settings = WriterSettings()
     worker = WriterWorker(settings)
     await worker.init()
-
-    loop = asyncio.get_running_loop()
-
-    def _handle_signal() -> None:
-        worker.stop()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, _handle_signal)
-
     await worker.run()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        sys.exit(0)
+    asyncio.run(_main())

@@ -16,6 +16,7 @@ def get_ch_client() -> clickhouse_connect.driver.Client:
     """
     Singleton-клиент ClickHouse, настроенный по CONFIG.ch.
     Работает через HTTP-интерфейс (порт SIEM_CH_PORT, обычно 8123).
+    Используем только те поля, которые реально есть в ClickHouseConfig.
     """
     ch = CONFIG.ch
     client = clickhouse_connect.get_client(
@@ -66,17 +67,17 @@ def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
     """
     result = client.query(query)
     rows: List[Dict[str, Any]] = []
-    for r in result.named_results():
+    for r in result.named_results():  # r — dict
         rows.append(
             {
-                "ts_first": r.ts_first,
-                "ts_last": r.ts_last,
-                "rule_id": r.rule_id,
-                "severity_agg": r.severity_agg,
-                "count_alerts": r.count_alerts,
-                "unique_entities": r.unique_entities,
-                "group_key_json": r.group_key_json,
-                "status": r.status,
+                "ts_first": r["ts_first"],
+                "ts_last": r["ts_last"],
+                "rule_id": r["rule_id"],
+                "severity_agg": r["severity_agg"],
+                "count_alerts": r["count_alerts"],
+                "unique_entities": r["unique_entities"],
+                "group_key_json": r["group_key_json"],
+                "status": r["status"],
             }
         )
     return rows
@@ -105,18 +106,18 @@ def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
     """
     result = client.query(query)
     rows: List[Dict[str, Any]] = []
-    for r in result.named_results():
+    for r in result.named_results():  # r — dict
         rows.append(
             {
-                "ts_first": r.ts_first,
-                "ts_last": r.ts_last,
-                "rule_id": r.rule_id,
-                "rule_name": r.rule_name,
-                "severity": r.severity,
-                "entity_key": r.entity_key,
-                "hits": r.hits,
-                "context_json": r.context_json,
-                "status": r.status,
+                "ts_first": r["ts_first"],
+                "ts_last": r["ts_last"],
+                "rule_id": r["rule_id"],
+                "rule_name": r["rule_name"],
+                "severity": r["severity"],
+                "entity_key": r["entity_key"],
+                "hits": r["hits"],
+                "context_json": r["context_json"],
+                "status": r["status"],
             }
         )
     return rows
@@ -128,12 +129,6 @@ def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
 def fetch_events(limit: int = 200) -> List[Dict[str, Any]]:
     """
     Возвращает последние события из siem.events для страницы /events.
-    Ожидается схема:
-      ts, event_id, category, subcategory,
-      src_ip (IPv4), dst_ip (IPv4),
-      src_port, dst_port,
-      device_vendor, device_product, log_source,
-      severity, message.
     """
     client = get_ch_client()
     limit = int(limit)
@@ -158,22 +153,22 @@ def fetch_events(limit: int = 200) -> List[Dict[str, Any]]:
     """
     result = client.query(query)
     rows: List[Dict[str, Any]] = []
-    for r in result.named_results():
+    for r in result.named_results():  # r — dict
         rows.append(
             {
-                "ts": r.ts,
-                "event_id": r.event_id,
-                "category": r.category,
-                "subcategory": r.subcategory,
-                "src_ip": r.src_ip,
-                "dst_ip": r.dst_ip,
-                "src_port": r.src_port,
-                "dst_port": r.dst_port,
-                "device_vendor": r.device_vendor,
-                "device_product": r.device_product,
-                "log_source": r.log_source,
-                "severity": r.severity,
-                "message": r.message,
+                "ts": r["ts"],
+                "event_id": r["event_id"],
+                "category": r["category"],
+                "subcategory": r["subcategory"],
+                "src_ip": r["src_ip"],
+                "dst_ip": r["dst_ip"],
+                "src_port": r["src_port"],
+                "dst_port": r["dst_port"],
+                "device_vendor": r["device_vendor"],
+                "device_product": r["device_product"],
+                "log_source": r["log_source"],
+                "severity": r["severity"],
+                "message": r["message"],
             }
         )
     return rows
