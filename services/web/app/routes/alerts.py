@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -25,7 +26,7 @@ async def alerts_page(
         alerts_raw = fetch_alerts_raw(limit=200)
         metrics = fetch_alert_metrics()
     except Exception as exc:  # noqa: BLE001
-        error = f'?? ??????? ????????? alert ??????: {exc!s}'
+        error = f'Unable to load incidents and alert queue: {exc!s}'
     return templates.TemplateResponse(
         'alerts.html',
         {

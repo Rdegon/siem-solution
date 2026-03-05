@@ -1,88 +1,33 @@
+
 {% extends "base.html" %}
-{% block title %}Alerts{% endblock %}
-{% block page_title %}Alerts{% endblock %}
-{% block page_subtitle %}Aggregated ? raw alert views ? ????? triage-??????? ? detail drawer.{% endblock %}
+{% block title %}Incidents{% endblock %}
+{% block page_title %}Incidents and Alerts{% endblock %}
+{% block page_subtitle %}Investigate aggregated incidents and the raw alert queue with direct pivots into the event console.{% endblock %}
 {% block content %}
 <div class="grid-4">
-    <section class="kpi-card"><div class="kpi-label">Agg Total</div><div class="kpi-value">{{ metrics.agg_total or 0 }}</div><div class="kpi-meta">????? ?????????????? ?????</div></section>
-    <section class="kpi-card"><div class="kpi-label">Agg Open</div><div class="kpi-value">{{ metrics.agg_open or 0 }}</div><div class="kpi-meta">?????????? ??????</div></section>
-    <section class="kpi-card"><div class="kpi-label">Raw Total</div><div class="kpi-value">{{ metrics.raw_total or 0 }}</div><div class="kpi-meta">????? ?????? ? ???????</div></section>
-    <section class="kpi-card"><div class="kpi-label">Critical Raw</div><div class="kpi-value">{{ metrics.critical_raw or 0 }}</div><div class="kpi-meta">??????? ?????????????</div></section>
+    <section class="kpi"><p class="kpi-label">Aggregated total</p><div class="kpi-value">{{ metrics.agg_total or 0 }}</div><div class="kpi-meta">Incident groups produced by stream and batch correlation.</div></section>
+    <section class="kpi"><p class="kpi-label">Open incidents</p><div class="kpi-value">{{ metrics.agg_open or 0 }}</div><div class="kpi-meta">Aggregated incidents not closed yet.</div></section>
+    <section class="kpi"><p class="kpi-label">Raw alerts</p><div class="kpi-value">{{ metrics.raw_total or 0 }}</div><div class="kpi-meta">Raw alert records waiting for SOC review.</div></section>
+    <section class="kpi"><p class="kpi-label">Critical raw</p><div class="kpi-value">{{ metrics.critical_raw or 0 }}</div><div class="kpi-meta">Critical raw alerts currently present in storage.</div></section>
 </div>
-
-<div style="margin: 18px 0; display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:center;">
-    <div class="tabs">
-        <a class="tab {% if view == 'agg' %}active{% endif %}" href="/alerts?view=agg">Aggregated</a>
-        <a class="tab {% if view == 'raw' %}active{% endif %}" href="/alerts?view=raw">Raw</a>
-    </div>
-    <a class="btn" href="/events">??????? Events ??? cross-check</a>
-</div>
-
+<section class="panel"><div class="panel-body" style="display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:center;"><div class="chip-row"><a class="chip" href="/alerts?view=agg">Aggregated incidents</a><a class="chip" href="/alerts?view=raw">Raw alert queue</a><a class="chip" href="/events?q=message%20ILIKE%20'%25auditd:%25'">Open auditd events</a></div><div class="page-note">Current view: <strong>{{ 'raw alerts' if view == 'raw' else 'aggregated incidents' }}</strong></div></div></section>
 <div class="split">
-    <section class="panel">
-        <div class="panel-header"><div><div class="panel-title">Alert Queue</div><div class="panel-subtitle">??????? ??????? ??????? ??? SOC-?????????</div></div></div>
-        <div class="panel-body table-wrap">
-            <table id="alertsTable">
-                <thead>
-                    {% if view == 'agg' %}
-                    <tr><th>Last Seen</th><th>Rule</th><th>Severity</th><th>Alerts</th><th>Entities</th><th>Status</th></tr>
-                    {% else %}
-                    <tr><th>Last Seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Source</th><th>Status</th></tr>
-                    {% endif %}
-                </thead>
-                <tbody></tbody>
-            </table>
-        </div>
-    </section>
-    <aside class="panel drawer" id="alertDrawer">
-        <div class="drawer-empty">???????? alert, ????? ??????? ????????? ???????? ? shortcuts ? Events.</div>
-    </aside>
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Queue</h3><p class="panel-subtitle">Click any incident or alert to inspect its context and pivot into Events.</p></div></div><div class="panel-body table-wrap"><table id="alertsTable"><thead>{% if view == 'agg' %}<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Alerts</th><th>Entities</th><th>Status</th></tr>{% else %}<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Source</th><th>Status</th></tr>{% endif %}</thead><tbody></tbody></table></div></section>
+    <aside class="panel drawer-card"><div class="panel-header"><div><h3 class="panel-title">Details</h3><p class="panel-subtitle">Selected incident or raw alert context.</p></div></div><div class="panel-body" id="alertDrawer"><div class="drawer-empty">Select an item from the queue to see the full context and shortcuts into Events.</div></div></aside>
 </div>
 {% endblock %}
 {% block extra_scripts %}
 <script>
-    const alertMode = {{ view | tojson }};
-    const alertsAgg = {{ alerts_agg | tojson }};
-    const alertsRaw = {{ alerts_raw | tojson }};
-    const data = alertMode === 'raw' ? alertsRaw : alertsAgg;
-    const tbody = document.querySelector('#alertsTable tbody');
-    const drawer = document.getElementById('alertDrawer');
-
-    function severityBadge(value) {
-      const sev = (value || 'info').toLowerCase();
-      return `<span class="severity sev-${sev}"><span class="dot"></span>${sev}</span>`;
-    }
-
-    function renderDrawer(item) {
-      if (!item) {
-        drawer.innerHTML = '<div class="drawer-empty">???????? alert, ????? ??????? ????????? ???????? ? shortcuts ? Events.</div>';
-        return;
-      }
-      const context = alertMode === 'raw' ? item.context_json : item.group_key_json;
-      const drillQuery = item.entity_key ? `log_source:${item.entity_key}` : `category:${item.rule_name}`;
-      drawer.innerHTML = `
-        <div class="panel-header"><div><div class="panel-title">Alert Details</div><div class="panel-subtitle">${item.rule_name}</div></div></div>
-        <div class="panel-body">
-          <div class="chip-row" style="margin-bottom:14px;">
-            <a class="chip" href="/events?q=${encodeURIComponent(drillQuery)}">Open in Events</a>
-            <span class="chip">rule_id:${item.rule_id}</span>
-            <span class="chip">status:${item.status}</span>
-          </div>
-          ${Object.entries(item).map(([key, value]) => `<div class="kv"><div class="key">${key}</div><div>${value || '?'}</div></div>`).join('')}
-          <div class="footnote mono" style="white-space:pre-wrap; word-break:break-word;">${context || ''}</div>
-        </div>`;
-    }
-
-    function renderTable() {
-      tbody.innerHTML = data.map((item, index) => {
-        if (alertMode === 'agg') {
-          return `<tr data-index="${index}"><td>${item.ts_last}</td><td>${item.rule_name}</td><td>${severityBadge(item.severity_agg)}</td><td>${item.count_alerts}</td><td>${item.unique_entities}</td><td>${item.status}</td></tr>`;
-        }
-        return `<tr data-index="${index}"><td>${item.ts_last}</td><td>${item.rule_name}</td><td>${severityBadge(item.severity)}</td><td>${item.hits}</td><td>${item.source}</td><td>${item.status}</td></tr>`;
-      }).join('');
-      tbody.querySelectorAll('tr').forEach(row => row.addEventListener('click', () => renderDrawer(data[Number(row.dataset.index)])));
-    }
-
-    renderTable();
+const mode = {{ view | tojson }};
+const alertsAgg = {{ alerts_agg | tojson }};
+const alertsRaw = {{ alerts_raw | tojson }};
+const tableBody = document.querySelector('#alertsTable tbody');
+const alertDrawer = document.getElementById('alertDrawer');
+const rows = mode === 'raw' ? alertsRaw : alertsAgg;
+let selectedIndex = rows.length ? 0 : null;
+function eventLinkForRow(row) { if (mode === 'raw' && row.source) return `/events?q=${encodeURIComponent(`log_source = '${row.source}'`)}`; if (row.entity_key) return `/events?q=${encodeURIComponent(`log_source = '${row.entity_key}'`)}`; return `/events?q=${encodeURIComponent(`message ILIKE '%${row.rule_name}%'`)}`; }
+function renderDrawer(row) { if (!row) { alertDrawer.innerHTML = '<div class="drawer-empty">Select an item from the queue to see the full context and shortcuts into Events.</div>'; return; } const contextBlock = mode === 'raw' ? row.context_json : row.group_key_json; const samplesBlock = mode === 'agg' ? row.samples_json : ''; const chips = `<div class="chip-row" style="margin-bottom:14px;"><a class="chip" href="${eventLinkForRow(row)}">Open related events</a><span class="chip">rule_id: ${escapeHtml(row.rule_id)}</span><span class="chip">status: ${escapeHtml(row.status)}</span></div>`; const details = Object.entries(row).map(([key, value]) => `<div class="kv"><div class="kv-key">${escapeHtml(key)}</div><div>${escapeHtml(value)}</div></div>`).join(''); alertDrawer.innerHTML = `${chips}<div class="kv-list">${details}</div>${contextBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(contextBlock)}</div>` : ''}${samplesBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(samplesBlock)}</div>` : ''}`; }
+function renderTable() { tableBody.innerHTML = rows.map((row, index) => { const cls = selectedIndex === index ? 'active' : ''; if (mode === 'agg') return `<tr data-index="${index}" class="${cls}"><td>${escapeHtml(row.ts_last)}</td><td>${escapeHtml(row.rule_name)}</td><td><span class="severity ${severityClass(row.severity_agg)}">${escapeHtml(row.severity_agg)}</span></td><td>${row.count_alerts}</td><td>${row.unique_entities}</td><td><span class="status-pill">${escapeHtml(row.status)}</span></td></tr>`; return `<tr data-index="${index}" class="${cls}"><td>${escapeHtml(row.ts_last)}</td><td>${escapeHtml(row.rule_name)}</td><td><span class="severity ${severityClass(row.severity)}">${escapeHtml(row.severity)}</span></td><td>${row.hits}</td><td>${escapeHtml(row.source)}</td><td><span class="status-pill">${escapeHtml(row.status)}</span></td></tr>`; }).join(''); tableBody.querySelectorAll('tr').forEach((rowElement) => { rowElement.addEventListener('click', () => { selectedIndex = Number(rowElement.dataset.index); renderTable(); renderDrawer(rows[selectedIndex]); }); }); }
+renderTable(); renderDrawer(selectedIndex === null ? null : rows[selectedIndex]);
 </script>
 {% endblock %}

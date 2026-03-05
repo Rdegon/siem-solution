@@ -1,81 +1,46 @@
+
 {% extends "base.html" %}
-{% block title %}Dashboards{% endblock %}
-{% block page_title %}Dashboards{% endblock %}
-{% block page_subtitle %}????? ingest pressure, alert volume ? ???????? ?????????? ?? ????????? 24 ????.{% endblock %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Monitoring Dashboard{% endblock %}
+{% block page_subtitle %}Operational picture of events, incidents, and monitored sources across the SIEM lab deployment.{% endblock %}
 {% block content %}
 <div class="grid-4">
-    <section class="kpi-card"><div class="kpi-label">Events 24h</div><div class="kpi-value">{{ metrics.events_24h or 0 }}</div><div class="kpi-meta">????????? ???: {{ metrics.events_1h or 0 }}</div></section>
-    <section class="kpi-card"><div class="kpi-label">Agg Alerts 24h</div><div class="kpi-value">{{ metrics.agg_alerts_24h or 0 }}</div><div class="kpi-meta">Raw alerts: {{ metrics.raw_alerts_24h or 0 }}</div></section>
-    <section class="kpi-card"><div class="kpi-label">Critical Events</div><div class="kpi-value">{{ metrics.critical_events_24h or 0 }}</div><div class="kpi-meta">?????????? ??? ??????? ??????????</div></section>
-    <section class="kpi-card"><div class="kpi-label">Active Sources</div><div class="kpi-value">{{ metrics.active_sources_24h or 0 }}</div><div class="kpi-meta">?????, ??????????? ?????? ?? 24h</div></section>
+    <section class="kpi"><p class="kpi-label">Open incidents</p><div class="kpi-value">{{ metrics.open_incidents_24h or 0 }}</div><div class="kpi-meta">Aggregated incidents still not closed during the last 24 hours.</div></section>
+    <section class="kpi"><p class="kpi-label">New alerts</p><div class="kpi-value">{{ metrics.new_alerts_24h or 0 }}</div><div class="kpi-meta">Fresh raw alerts waiting for initial triage.</div></section>
+    <section class="kpi"><p class="kpi-label">Events 1h</p><div class="kpi-value">{{ metrics.events_1h or 0 }}</div><div class="kpi-meta">Current ingestion tempo across all monitored nodes.</div></section>
+    <section class="kpi"><p class="kpi-label">Audit events 24h</p><div class="kpi-value">{{ metrics.audit_events_24h or 0 }}</div><div class="kpi-meta">auditd coverage visible in the same event pipeline.</div></section>
 </div>
-
-<div class="grid-2" style="margin-top:18px; align-items:start;">
+<div class="grid-2">
     <section class="panel">
-        <div class="panel-header"><div><div class="panel-title">Event Pressure</div><div class="panel-subtitle">30-minute buckets for the last 24 hours</div></div></div>
-        <div class="panel-body"><div id="dashboard-timeline" class="chart"></div></div>
+        <div class="panel-header"><div><h3 class="panel-title">Incident queue</h3><p class="panel-subtitle">Most recent incidents and alerts for analyst triage.</p></div><a class="btn ghost" href="/alerts">Open incidents</a></div>
+        <div class="panel-body table-wrap"><table><thead><tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Status</th></tr></thead><tbody>{% for alert in recent_alerts %}<tr><td>{{ alert.ts_last }}</td><td>{{ alert.rule_name }}</td><td><span class="severity sev-{{ alert.severity }}">{{ alert.severity }}</span></td><td>{{ alert.hits }}</td><td><span class="status-pill">{{ alert.status }}</span></td></tr>{% endfor %}</tbody></table></div>
     </section>
     <section class="panel">
-        <div class="panel-header"><div><div class="panel-title">Severity Mix</div><div class="panel-subtitle">????????????? ?????? ??????????? ?? ????????</div></div></div>
-        <div class="panel-body">
-            <div class="chip-row">
-                {% for item in severity_breakdown %}
-                <span class="chip">{{ item.severity }}: {{ item.cnt }}</span>
-                {% endfor %}
-            </div>
-            <div class="footnote">??? ??????????? snapshot. ??? ??????????? ????????? ??????????? ???????????? severity ? ??????? ?????????.</div>
-        </div>
+        <div class="panel-header"><div><h3 class="panel-title">Event volume</h3><p class="panel-subtitle">Last 24 hours, one-hour buckets.</p></div></div>
+        <div class="panel-body"><div id="dashboardTimeline" class="chart-bars"></div></div>
     </section>
 </div>
-
-<div class="grid-2" style="margin-top:18px; align-items:start;">
-    <section class="panel">
-        <div class="panel-header"><div><div class="panel-title">Top Sources</div><div class="panel-subtitle">???????? ?????? ????????? ?????? ?? 24h</div></div></div>
-        <div class="panel-body table-wrap">
-            <table>
-                <thead><tr><th>Source</th><th>Events</th><th>Last Seen</th><th>High/Critical</th></tr></thead>
-                <tbody>
-                {% for source in top_sources %}
-                <tr>
-                    <td class="mono">{{ source.log_source }}</td>
-                    <td>{{ source.events }}</td>
-                    <td>{{ source.last_seen }}</td>
-                    <td>{{ source.high_count + source.critical_count }}</td>
-                </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </section>
-    <section class="panel">
-        <div class="panel-header"><div><div class="panel-title">Recent Alerts</div><div class="panel-subtitle">????????? ???????? ?????? ??? triage</div></div><a class="btn" href="/alerts">??????? Alerts</a></div>
-        <div class="panel-body table-wrap">
-            <table>
-                <thead><tr><th>Last Seen</th><th>Rule</th><th>Severity</th><th>Hits</th></tr></thead>
-                <tbody>
-                {% for alert in recent_alerts %}
-                <tr>
-                    <td>{{ alert.ts_last }}</td>
-                    <td>{{ alert.rule_name }}</td>
-                    <td><span class="severity sev-{{ alert.severity }}"><span class="dot"></span>{{ alert.severity }}</span></td>
-                    <td>{{ alert.hits }}</td>
-                </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </section>
+<div class="grid-3">
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Events by severity</h3><p class="panel-subtitle">Severity distribution for the last 24 hours.</p></div></div><div class="panel-body donut-wrap"><div class="donut" id="eventsSeverityDonut"><div class="donut-center" id="eventsSeverityTotal">0</div></div><div class="legend" id="eventsSeverityLegend"></div></div></section>
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Alerts by status</h3><p class="panel-subtitle">SOC workflow state for raw alerts.</p></div></div><div class="panel-body donut-wrap"><div class="donut" id="alertStatusDonut"><div class="donut-center" id="alertStatusTotal">0</div></div><div class="legend" id="alertStatusLegend"></div></div></section>
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Alerts by severity</h3><p class="panel-subtitle">Which alert levels dominate the queue.</p></div></div><div class="panel-body donut-wrap"><div class="donut" id="alertSeverityDonut"><div class="donut-center" id="alertSeverityTotal">0</div></div><div class="legend" id="alertSeverityLegend"></div></div></section>
+</div>
+<div class="grid-2">
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top sources</h3><p class="panel-subtitle">Most active monitored sources during the last 24 hours.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Source</th><th>Events</th><th>Last seen</th><th>High + critical</th></tr></thead><tbody>{% for source in top_sources %}<tr><td class="mono">{{ source.log_source }}</td><td>{{ source.events }}</td><td>{{ source.last_seen }}</td><td>{{ source.high_count + source.critical_count }}</td></tr>{% endfor %}</tbody></table></div></section>
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top categories</h3><p class="panel-subtitle">Most frequent normalized categories in the event stream.</p></div></div><div class="panel-body"><div class="mini-list">{% set max_events = (top_categories[0].events if top_categories else 1) %}{% for row in top_categories %}<div class="mini-row"><div><div style="font-weight:600;">{{ row.category }}</div><div class="page-note">{{ row.events }} events</div></div><div style="width:160px;"><div class="mini-bar-track"><div class="mini-bar" style="width: {{ (row.events / max_events * 100) if max_events else 0 }}%;"></div></div></div></div>{% endfor %}</div></div></section>
 </div>
 {% endblock %}
 {% block extra_scripts %}
 <script>
-    const timeline = {{ timeline | tojson }};
-    const container = document.getElementById('dashboard-timeline');
-    const maxValue = Math.max(...timeline.map(item => item.cnt), 1);
-    container.innerHTML = timeline.map(item => {
-      const height = Math.max(10, Math.round((item.cnt / maxValue) * 170));
-      const label = item.bucket.slice(5, 16);
-      return `<div class="bar-col"><div class="bar-value">${item.cnt}</div><div class="bar" style="height:${height}px"></div><div class="bar-label">${label}</div></div>`;
-    }).join('');
+const timeline = {{ timeline | tojson }};
+const severityRows = {{ severity_breakdown | tojson }}.map((row) => ({ label: row.severity, count: row.cnt }));
+const alertSeverityRows = {{ alert_severity_breakdown | tojson }}.map((row) => ({ label: row.severity, count: row.cnt }));
+const alertStatusRows = {{ alert_status_breakdown | tojson }}.map((row) => ({ label: row.status, count: row.cnt }));
+const timelineContainer = document.getElementById('dashboardTimeline');
+if (timelineContainer) { const maxValue = Math.max(...timeline.map((item) => Number(item.cnt || 0)), 1); timelineContainer.innerHTML = timeline.map((item) => { const count = Number(item.cnt || 0); const height = Math.max(10, Math.round((count / maxValue) * 180)); const label = String(item.bucket || '').slice(5, 16); return `<div class="chart-col"><div class="chart-value">${count}</div><div class="chart-bar" style="height:${height}px"></div><div class="chart-label">${escapeHtml(label)}</div></div>`; }).join(''); }
+function renderLegend(containerId, rows) { const container = document.getElementById(containerId); if (!container) return; container.innerHTML = rows.map((row) => `<div class="legend-row"><span class="legend-swatch" style="background:${row.__color}"></span><span>${escapeHtml(row.label)}</span><strong>${Number(row.count || 0)}</strong></div>`).join(''); }
+renderDonut('eventsSeverityDonut', 'eventsSeverityTotal', severityRows); renderLegend('eventsSeverityLegend', severityRows);
+renderDonut('alertSeverityDonut', 'alertSeverityTotal', alertSeverityRows); renderLegend('alertSeverityLegend', alertSeverityRows);
+renderDonut('alertStatusDonut', 'alertStatusTotal', alertStatusRows); renderLegend('alertStatusLegend', alertStatusRows);
 </script>
 {% endblock %}

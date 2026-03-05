@@ -1,25 +1,11 @@
+
 {% extends "base.html" %}
 {% block title %}Assets{% endblock %}
-{% block page_title %}Assets{% endblock %}
-{% block page_subtitle %}?????????????? ??????? ?? ??????? ????????? ?????? ?? ??????? ?? 24 ????.{% endblock %}
+{% block page_title %}Observed Assets{% endblock %}
+{% block page_subtitle %}Inventory inferred from active log sources and the events they produce in the SIEM pipeline.{% endblock %}
 {% block content %}
 <section class="panel">
-    <div class="panel-header"><div><div class="panel-title">Observed Assets</div><div class="panel-subtitle">log_source ??? ??????? proxy-?????????. ??? production ????? ????????????, ?? ??? lab ??? ??? ???????.</div></div></div>
-    <div class="panel-body table-wrap">
-        <table>
-            <thead><tr><th>Asset</th><th>Events 24h</th><th>Notable</th><th>Last Seen</th><th>Top Categories</th></tr></thead>
-            <tbody>
-            {% for asset in assets %}
-            <tr>
-                <td class="mono">{{ asset.asset }}</td>
-                <td>{{ asset.events }}</td>
-                <td>{{ asset.notable_events }}</td>
-                <td>{{ asset.last_seen }}</td>
-                <td>{{ asset.categories | join(', ') }}</td>
-            </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-    </div>
+    <div class="panel-header"><div><h3 class="panel-title">Asset inventory</h3><p class="panel-subtitle">Each row is a reporting source observed during the last 24 hours.</p></div></div>
+    <div class="panel-body table-wrap"><table><thead><tr><th>Asset</th><th>Events</th><th>Notable</th><th>auditd</th><th>Last seen</th><th>Top categories</th></tr></thead><tbody>{% for asset in assets %}<tr><td class="mono">{{ asset.asset }}</td><td>{{ asset.events }}</td><td>{{ asset.notable_events }}</td><td>{{ asset.audit_events }}</td><td>{{ asset.last_seen }}</td><td>{{ asset.categories | join(', ') }}</td></tr>{% endfor %}</tbody></table></div>
 </section>
 {% endblock %}

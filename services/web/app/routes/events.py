@@ -1,10 +1,11 @@
+
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from .auth import get_current_user
-from ..deps import fetch_events, fetch_events_timeseries
+from ..deps import EVENT_ROW_LIMIT_DEFAULT, execute_event_query
 from ..templates import templates
 
 router = APIRouter()
@@ -13,35 +14,32 @@ router = APIRouter()
 @router.get('/events', response_class=HTMLResponse)
 async def events_page(
     request: Request,
-    q: str = Query('', description='SQL-like search string'),
-    auto_refresh: str = Query('off'),
+    q: str = Query('', description='SQL query or expression for events_view'),
     window: str = Query('24h'),
+    auto_refresh: str = Query('off'),
+    limit: int = Query(EVENT_ROW_LIMIT_DEFAULT, ge=25, le=1000),
     user=Depends(get_current_user),
 ) -> HTMLResponse:
-    error = None
-    events = []
-    timeseries = []
-    try:
-        events = fetch_events(limit=500)
-        timeseries = fetch_events_timeseries(hours=24, bucket_minutes=30)
-    except Exception as exc:  # noqa: BLE001
-        error = f'?? ??????? ????????? ??????? ?? ClickHouse: {exc!s}'
     return templates.TemplateResponse(
         'events.html',
         {
             'request': request,
             'user': user,
             'active_page': 'events',
-            'events': events,
-            'timeseries': timeseries,
             'initial_query': q,
             'initial_window': window,
             'initial_auto_refresh': auto_refresh,
-            'error': error,
+            'initial_limit': limit,
         },
     )
 
 
-@router.get('/api/events_timeseries', response_class=JSONResponse)
-async def events_timeseries_api(user=Depends(get_current_user)) -> JSONResponse:
-    return JSONResponse(fetch_events_timeseries(hours=24, bucket_minutes=30))
+@router.post('/api/events/query', response_class=JSONResponse)
+async def events_query_api(payload: dict = Body(default={}), user=Depends(get_current_user)) -> JSONResponse:
+    query_text = str(payload.get('query', '') or '')
+    window = str(payload.get('window', '24h') or '24h')
+    limit = int(payload.get('limit', EVENT_ROW_LIMIT_DEFAULT) or EVENT_ROW_LIMIT_DEFAULT)
+    try:
+        return JSONResponse(execute_event_query(query_text=query_text, window=window, limit=limit))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({'error': str(exc)}, status_code=400)
