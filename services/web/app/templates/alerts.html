@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Alerts{% endblock %}
+{% block page_title %}Alerts{% endblock %}
+{% block page_subtitle %}Aggregated ? raw alert views ? ????? triage-??????? ? detail drawer.{% endblock %}
+{% block content %}
+<div class="grid-4">
+    <section class="kpi-card"><div class="kpi-label">Agg Total</div><div class="kpi-value">{{ metrics.agg_total or 0 }}</div><div class="kpi-meta">????? ?????????????? ?????</div></section>
+    <section class="kpi-card"><div class="kpi-label">Agg Open</div><div class="kpi-value">{{ metrics.agg_open or 0 }}</div><div class="kpi-meta">?????????? ??????</div></section>
+    <section class="kpi-card"><div class="kpi-label">Raw Total</div><div class="kpi-value">{{ metrics.raw_total or 0 }}</div><div class="kpi-meta">????? ?????? ? ???????</div></section>
+    <section class="kpi-card"><div class="kpi-label">Critical Raw</div><div class="kpi-value">{{ metrics.critical_raw or 0 }}</div><div class="kpi-meta">??????? ?????????????</div></section>
+</div>
+
+<div style="margin: 18px 0; display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:center;">
+    <div class="tabs">
+        <a class="tab {% if view == 'agg' %}active{% endif %}" href="/alerts?view=agg">Aggregated</a>
+        <a class="tab {% if view == 'raw' %}active{% endif %}" href="/alerts?view=raw">Raw</a>
+    </div>
+    <a class="btn" href="/events">??????? Events ??? cross-check</a>
+</div>
+
+<div class="split">
+    <section class="panel">
+        <div class="panel-header"><div><div class="panel-title">Alert Queue</div><div class="panel-subtitle">??????? ??????? ??????? ??? SOC-?????????</div></div></div>
+        <div class="panel-body table-wrap">
+            <table id="alertsTable">
+                <thead>
+                    {% if view == 'agg' %}
+                    <tr><th>Last Seen</th><th>Rule</th><th>Severity</th><th>Alerts</th><th>Entities</th><th>Status</th></tr>
+                    {% else %}
+                    <tr><th>Last Seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Source</th><th>Status</th></tr>
+                    {% endif %}
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </section>
+    <aside class="panel drawer" id="alertDrawer">
+        <div class="drawer-empty">???????? alert, ????? ??????? ????????? ???????? ? shortcuts ? Events.</div>
+    </aside>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+    const alertMode = {{ view | tojson }};
+    const alertsAgg = {{ alerts_agg | tojson }};
+    const alertsRaw = {{ alerts_raw | tojson }};
+    const data = alertMode === 'raw' ? alertsRaw : alertsAgg;
+    const tbody = document.querySelector('#alertsTable tbody');
+    const drawer = document.getElementById('alertDrawer');
+
+    function severityBadge(value) {
+      const sev = (value || 'info').toLowerCase();
+      return `<span class="severity sev-${sev}"><span class="dot"></span>${sev}</span>`;
+    }
+
+    function renderDrawer(item) {
+      if (!item) {
+        drawer.innerHTML = '<div class="drawer-empty">???????? alert, ????? ??????? ????????? ???????? ? shortcuts ? Events.</div>';
+        return;
+      }
+      const context = alertMode === 'raw' ? item.context_json : item.group_key_json;
+      const drillQuery = item.entity_key ? `log_source:${item.entity_key}` : `category:${item.rule_name}`;
+      drawer.innerHTML = `
+        <div class="panel-header"><div><div class="panel-title">Alert Details</div><div class="panel-subtitle">${item.rule_name}</div></div></div>
+        <div class="panel-body">
+          <div class="chip-row" style="margin-bottom:14px;">
+            <a class="chip" href="/events?q=${encodeURIComponent(drillQuery)}">Open in Events</a>
+            <span class="chip">rule_id:${item.rule_id}</span>
+            <span class="chip">status:${item.status}</span>
+          </div>
+          ${Object.entries(item).map(([key, value]) => `<div class="kv"><div class="key">${key}</div><div>${value || '?'}</div></div>`).join('')}
+          <div class="footnote mono" style="white-space:pre-wrap; word-break:break-word;">${context || ''}</div>
+        </div>`;
+    }
+
+    function renderTable() {
+      tbody.innerHTML = data.map((item, index) => {
+        if (alertMode === 'agg') {
+          return `<tr data-index="${index}"><td>${item.ts_last}</td><td>${item.rule_name}</td><td>${severityBadge(item.severity_agg)}</td><td>${item.count_alerts}</td><td>${item.unique_entities}</td><td>${item.status}</td></tr>`;
+        }
+        return `<tr data-index="${index}"><td>${item.ts_last}</td><td>${item.rule_name}</td><td>${severityBadge(item.severity)}</td><td>${item.hits}</td><td>${item.source}</td><td>${item.status}</td></tr>`;
+      }).join('');
+      tbody.querySelectorAll('tr').forEach(row => row.addEventListener('click', () => renderDrawer(data[Number(row.dataset.index)])));
+    }
+
+    renderTable();
+</script>
+{% endblock %}

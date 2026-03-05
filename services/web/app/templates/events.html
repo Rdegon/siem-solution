@@ -1,92 +1,228 @@
 {% extends "base.html" %}
-{% block title %}События{% endblock %}
-
-{% block extra_head %}
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-{% endblock %}
-
+{% block title %}Events{% endblock %}
+{% block page_title %}Events{% endblock %}
+{% block page_subtitle %}SQL-like ?????, ????? ???? ???????, storage label, auto-refresh ? detail drawer ?? ???????.{% endblock %}
 {% block content %}
-<h2>События (events)</h2>
-
-{% if error %}
-    <div class="alert alert-error">
-        {{ error }}
+<div class="toolbar">
+    <div>
+        <input id="queryInput" class="field" type="text" value="{{ initial_query }}" placeholder="severity:critical log_source:192.168.1.37 sshd">
+        <div class="hint">?????????????? ????? ???? <span class="mono">field:value</span> ? ????????? ????? ?? message/category/source.</div>
     </div>
-{% endif %}
-
-<div class="chart-card">
-    <h3>Events per minute (последние 60 минут)</h3>
-    <div id="events_chart" style="width: 100%; height: 260px;"></div>
+    <select id="windowSelect" class="select">
+        <option value="15m" {% if initial_window == '15m' %}selected{% endif %}>Last 15m</option>
+        <option value="1h" {% if initial_window == '1h' %}selected{% endif %}>Last 1h</option>
+        <option value="6h" {% if initial_window == '6h' %}selected{% endif %}>Last 6h</option>
+        <option value="24h" {% if initial_window == '24h' %}selected{% endif %}>Last 24h</option>
+        <option value="all" {% if initial_window == 'all' %}selected{% endif %}>All data</option>
+    </select>
+    <select id="storageSelect" class="select">
+        <option>ClickHouse / hot</option>
+    </select>
+    <select id="refreshSelect" class="select">
+        <option value="off" {% if initial_auto_refresh == 'off' %}selected{% endif %}>No refresh</option>
+        <option value="10000" {% if initial_auto_refresh == '10000' %}selected{% endif %}>10s</option>
+        <option value="30000" {% if initial_auto_refresh == '30000' %}selected{% endif %}>30s</option>
+        <option value="60000" {% if initial_auto_refresh == '60000' %}selected{% endif %}>1m</option>
+    </select>
+    <button id="exportBtn" class="btn primary" type="button">Export TSV</button>
 </div>
 
-<p>Показаны последние {{ events|length }} событий.</p>
-<table>
-    <thead>
-    <tr>
-        <th>ts</th>
-        <th>event_id</th>
-        <th>category</th>
-        <th>subcategory</th>
-        <th>src_ip</th>
-        <th>dst_ip</th>
-        <th>src_port</th>
-        <th>dst_port</th>
-        <th>device</th>
-        <th>log_source</th>
-        <th>severity</th>
-        <th>message</th>
-    </tr>
-    </thead>
-    <tbody>
-    {% for e in events %}
-        <tr>
-            <td>{{ e.ts }}</td>
-            <td>{{ e.event_id }}</td>
-            <td>{{ e.category }}</td>
-            <td>{{ e.subcategory }}</td>
-            <td>{{ e.src_ip }}</td>
-            <td>{{ e.dst_ip }}</td>
-            <td>{{ e.src_port }}</td>
-            <td>{{ e.dst_port }}</td>
-            <td>{{ e.device_vendor }} {{ e.device_product }}</td>
-            <td>{{ e.log_source }}</td>
-            <td>{{ e.severity }}</td>
-            <td>{{ e.message }}</td>
-        </tr>
-    {% endfor %}
-    </tbody>
-</table>
+<div class="split">
+    <div>
+        <section class="panel" style="margin-bottom:18px;">
+            <div class="panel-header"><div><div class="panel-title">Events Histogram</div><div class="panel-subtitle">????????????? ????????? ?????? ?? 30-???????? bucket???</div></div><div id="eventsCounter" class="badge success">0 rows</div></div>
+            <div class="panel-body"><div id="eventsChart" class="chart"></div></div>
+        </section>
 
+        <section class="panel">
+            <div class="panel-header"><div><div class="panel-title">Event Table</div><div class="panel-subtitle">???? ?? ?????? ????????? drawer ??????. ???? ?? ???? ? drawer ????????? drill-down ? ?????? ??????.</div></div></div>
+            <div class="panel-body table-wrap">
+                <div class="chip-row" id="columnToggles" style="margin-bottom:14px;"></div>
+                <table id="eventsTable">
+                    <thead>
+                        <tr>
+                            <th data-col="ts">Time</th>
+                            <th data-col="severity">Severity</th>
+                            <th data-col="category">Category</th>
+                            <th data-col="subcategory">Subtype</th>
+                            <th data-col="log_source">Source</th>
+                            <th data-col="src_ip">Src IP</th>
+                            <th data-col="dst_ip">Dst IP</th>
+                            <th data-col="message">Message</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+    <aside class="panel drawer" id="eventDrawer">
+        <div class="drawer-empty">???????? ??????? ?? ???????, ????? ??????? ??????, ???? ??? drill-down ? raw ????????.</div>
+    </aside>
+</div>
+{% endblock %}
+{% block extra_scripts %}
 <script>
-    async function loadEventsTimeseries() {
-        try {
-            const resp = await fetch('/api/events_timeseries');
-            if (!resp.ok) {
-                console.error('Failed to load timeseries', resp.status);
-                return;
-            }
-            const data = await resp.json();
-            const categories = data.map(p => p.ts_minute);
-            const values = data.map(p => p.cnt);
+    const eventsData = {{ events | tojson }};
+    const chartData = {{ timeseries | tojson }};
+    const tableBody = document.querySelector('#eventsTable tbody');
+    const drawer = document.getElementById('eventDrawer');
+    const queryInput = document.getElementById('queryInput');
+    const windowSelect = document.getElementById('windowSelect');
+    const refreshSelect = document.getElementById('refreshSelect');
+    const eventsCounter = document.getElementById('eventsCounter');
+    const exportBtn = document.getElementById('exportBtn');
+    const chart = document.getElementById('eventsChart');
+    const columnToggles = document.getElementById('columnToggles');
+    const columns = ['ts', 'severity', 'category', 'subcategory', 'log_source', 'src_ip', 'dst_ip', 'message'];
+    const labels = {ts:'time', severity:'severity', category:'category', subcategory:'subtype', log_source:'source', src_ip:'src ip', dst_ip:'dst ip', message:'message'};
+    const visibleColumns = new Set(JSON.parse(localStorage.getItem('siem_events_columns') || JSON.stringify(columns)));
+    let selectedEventId = null;
 
-            const chartDom = document.getElementById('events_chart');
-            const myChart = echarts.init(chartDom);
-            const option = {
-                tooltip: { trigger: 'axis' },
-                xAxis: { type: 'category', data: categories },
-                yAxis: { type: 'value' },
-                series: [{
-                    type: 'line',
-                    smooth: true,
-                    data: values
-                }]
-            };
-            myChart.setOption(option);
-        } catch (e) {
-            console.error(e);
-        }
+    function tsToMs(ts) {
+      const normalized = ts.replace(' ', 'T');
+      const ms = Date.parse(normalized);
+      return Number.isNaN(ms) ? 0 : ms;
     }
 
-    loadEventsTimeseries();
+    function withinWindow(item) {
+      const value = windowSelect.value;
+      if (value === 'all') return true;
+      const diff = Date.now() - tsToMs(item.ts);
+      const windows = { '15m': 15*60*1000, '1h': 60*60*1000, '6h': 6*60*60*1000, '24h': 24*60*60*1000 };
+      return diff <= (windows[value] || windows['24h']);
+    }
+
+    function queryMatches(item, query) {
+      if (!query.trim()) return true;
+      const tokens = query.trim().split(/\s+/).filter(Boolean);
+      const haystack = Object.values(item).join(' ').toLowerCase();
+      return tokens.every(token => {
+        if (token.includes(':')) {
+          const [rawKey, ...rest] = token.split(':');
+          const key = rawKey.trim();
+          const expected = rest.join(':').toLowerCase();
+          const actual = String(item[key] ?? '').toLowerCase();
+          return actual.includes(expected);
+        }
+        return haystack.includes(token.toLowerCase());
+      });
+    }
+
+    function severityBadge(value) {
+      const sev = (value || 'info').toLowerCase();
+      return `<span class="severity sev-${sev}"><span class="dot"></span>${sev}</span>`;
+    }
+
+    function renderColumns() {
+      columnToggles.innerHTML = columns.map(col => {
+        const enabled = visibleColumns.has(col);
+        return `<button type="button" class="chip" data-col-toggle="${col}" style="opacity:${enabled ? '1' : '0.55'}">${labels[col]}</button>`;
+      }).join('');
+      document.querySelectorAll('[data-col-toggle]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const col = btn.dataset.colToggle;
+          if (visibleColumns.has(col) && visibleColumns.size > 1) visibleColumns.delete(col); else visibleColumns.add(col);
+          localStorage.setItem('siem_events_columns', JSON.stringify([...visibleColumns]));
+          renderColumns();
+          renderTable(getFilteredEvents());
+        });
+      });
+    }
+
+    function renderChart(filtered) {
+      const items = chartData.slice(-24);
+      const maxValue = Math.max(...items.map(item => item.cnt), 1);
+      chart.innerHTML = items.map(item => {
+        const height = Math.max(10, Math.round((item.cnt / maxValue) * 170));
+        return `<div class="bar-col"><div class="bar-value">${item.cnt}</div><div class="bar" style="height:${height}px"></div><div class="bar-label">${item.bucket.slice(5, 16)}</div></div>`;
+      }).join('');
+      eventsCounter.textContent = `${filtered.length} rows`;
+    }
+
+    function renderDrawer(item) {
+      if (!item) {
+        drawer.innerHTML = '<div class="drawer-empty">???????? ??????? ?? ???????, ????? ??????? ??????, ???? ??? drill-down ? raw ????????.</div>';
+        return;
+      }
+      const pairs = [
+        ['Time', item.ts], ['Event ID', item.event_id], ['Severity', item.severity], ['Category', item.category], ['Subtype', item.subcategory],
+        ['Source', item.log_source], ['Src IP', item.src_ip], ['Dst IP', item.dst_ip], ['Src Port', item.src_port || ''], ['Dst Port', item.dst_port || ''],
+        ['Vendor', item.device_vendor], ['Product', item.device_product], ['Tags', item.tags || ''], ['Message', item.message]
+      ];
+      drawer.innerHTML = `
+        <div class="panel-header"><div><div class="panel-title">Event Details</div><div class="panel-subtitle">Drill-down shortcuts update the query bar</div></div></div>
+        <div class="panel-body">
+          <div class="chip-row" style="margin-bottom: 14px;">
+            <button type="button" class="chip" data-drill="severity:${item.severity}">severity:${item.severity}</button>
+            <button type="button" class="chip" data-drill="log_source:${item.log_source}">log_source:${item.log_source}</button>
+            <button type="button" class="chip" data-drill="category:${item.category}">category:${item.category}</button>
+          </div>
+          ${pairs.map(([label, value]) => `<div class="kv"><div class="key">${label}</div><div>${value || '?'}</div></div>`).join('')}
+        </div>`;
+      drawer.querySelectorAll('[data-drill]').forEach(btn => btn.addEventListener('click', () => {
+        queryInput.value = `${queryInput.value} ${btn.dataset.drill}`.trim();
+        renderAll();
+      }));
+    }
+
+    function renderTable(filtered) {
+      const activeColumns = columns.filter(col => visibleColumns.has(col));
+      document.querySelectorAll('#eventsTable th').forEach(th => {
+        th.style.display = activeColumns.includes(th.dataset.col) ? '' : 'none';
+      });
+      tableBody.innerHTML = filtered.map(item => {
+        const cells = activeColumns.map(col => {
+          const value = col === 'severity' ? severityBadge(item[col]) : (item[col] || '');
+          return `<td data-col="${col}">${value}</td>`;
+        }).join('');
+        return `<tr data-event-id="${item.event_id}">${cells}</tr>`;
+      }).join('');
+      tableBody.querySelectorAll('tr').forEach(row => row.addEventListener('click', () => {
+        selectedEventId = row.dataset.eventId;
+        renderDrawer(filtered.find(item => item.event_id === selectedEventId));
+      }));
+      if (selectedEventId) renderDrawer(filtered.find(item => item.event_id === selectedEventId));
+    }
+
+    function getFilteredEvents() {
+      return eventsData.filter(item => withinWindow(item) && queryMatches(item, queryInput.value));
+    }
+
+    function renderAll() {
+      const filtered = getFilteredEvents();
+      renderChart(filtered);
+      renderTable(filtered);
+      if (selectedEventId && !filtered.some(item => item.event_id === selectedEventId)) {
+        selectedEventId = null;
+        renderDrawer(null);
+      }
+    }
+
+    exportBtn.addEventListener('click', () => {
+      const filtered = getFilteredEvents();
+      const headers = columns.filter(col => visibleColumns.has(col));
+      const rows = [headers.join('	')].concat(filtered.map(item => headers.map(col => String(item[col] ?? '')).join('	')));
+      const blob = new Blob([rows.join('
+')], {type: 'text/tab-separated-values;charset=utf-8'});
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `siem-events-${Date.now()}.tsv`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
+    queryInput.addEventListener('input', renderAll);
+    windowSelect.addEventListener('change', renderAll);
+    refreshSelect.addEventListener('change', () => {
+      const value = Number(refreshSelect.value || '0');
+      localStorage.setItem('siem_events_refresh', refreshSelect.value);
+      if (window.eventsRefreshTimer) clearInterval(window.eventsRefreshTimer);
+      if (value > 0) window.eventsRefreshTimer = setInterval(() => window.location.reload(), value);
+    });
+    renderColumns();
+    const savedRefresh = localStorage.getItem('siem_events_refresh');
+    if (savedRefresh && refreshSelect.value === 'off') refreshSelect.value = savedRefresh;
+    if (Number(refreshSelect.value || '0') > 0) window.eventsRefreshTimer = setInterval(() => window.location.reload(), Number(refreshSelect.value));
+    renderAll();
 </script>
 {% endblock %}

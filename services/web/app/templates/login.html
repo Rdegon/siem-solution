@@ -2,42 +2,36 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>SIEM Web — Login</title>
+    <title>SIEM Console Login</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
-        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-               margin: 0; background-color: #0f172a; color: #e5e7eb; }
-        .center { display: flex; align-items: center; justify-content: center; height: 100vh; }
-        .card { background-color: #020617; padding: 24px; border-radius: 12px;
-                box-shadow: 0 10px 25px rgba(0,0,0,0.6); width: 320px; }
-        h1 { margin-top: 0; font-size: 18px; margin-bottom: 16px; }
-        label { font-size: 13px; display: block; margin-bottom: 4px; }
-        input[type="text"], input[type="password"] {
-            width: 100%; padding: 8px; margin-bottom: 12px;
-            border-radius: 6px; border: 1px solid #1f2937; background-color: #020617; color: #e5e7eb;
-        }
-        button { width: 100%; padding: 8px; border-radius: 6px; border: none;
-                 background-color: #22c55e; color: #020617; font-weight: 600; cursor: pointer; }
-        button:hover { background-color: #16a34a; }
-        .hint { font-size: 12px; color: #9ca3af; margin-top: 8px; }
+        body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: "IBM Plex Sans", sans-serif; color: #d8e7f7; background: radial-gradient(circle at top left, rgba(64, 212, 181, .18), transparent 28%), radial-gradient(circle at bottom right, rgba(88, 166, 255, .15), transparent 26%), linear-gradient(180deg, #081220 0%, #040b14 100%); }
+        .card { width: min(420px, calc(100vw - 32px)); padding: 28px; border-radius: 28px; background: rgba(8,17,31,.92); border: 1px solid rgba(111,146,183,.20); box-shadow: 0 30px 80px rgba(0,0,0,.42); }
+        h1 { margin: 0 0 10px; font: 700 28px "Space Grotesk", sans-serif; }
+        p { margin: 0 0 18px; color: #88a3bf; line-height: 1.5; }
+        label { display: block; margin: 12px 0 8px; font-size: 13px; color: #a8bfd8; }
+        input { width: 100%; box-sizing: border-box; padding: 13px 14px; border-radius: 14px; border: 1px solid rgba(111,146,183,.20); background: rgba(255,255,255,.03); color: #d8e7f7; }
+        button { width: 100%; margin-top: 16px; padding: 13px 14px; border: 1px solid rgba(88,166,255,.22); border-radius: 14px; background: linear-gradient(135deg, rgba(64,212,181,.22), rgba(88,166,255,.18)); color: #eff7ff; font-weight: 600; cursor: pointer; }
+        .error { margin-bottom: 14px; padding: 12px 14px; border-radius: 14px; background: rgba(251,113,133,.12); border: 1px solid rgba(251,113,133,.20); color: #ffd5dc; }
+        .meta { margin-top: 16px; color: #88a3bf; font-size: 12px; }
     </style>
 </head>
 <body>
-<div class="center">
     <div class="card">
-        <h1>SIEM Web Login</h1>
+        <h1>SIEM Console</h1>
+        <p>Interactive MVP web-console for the lab SIEM deployment. ??????????? ????? ??? triage-????????????? ?? ???????? ? ???????.</p>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
         <form method="post" action="/auth/login">
-            <label for="username">Пользователь</label>
-            <input id="username" name="username" type="text" autocomplete="username">
-            <label for="password">Пароль</label>
-            <input id="password" name="password" type="password" autocomplete="current-password">
-            <input type="hidden" name="grant_type" value="">
-            <button type="submit">Войти</button>
+            <label for="username">????????????</label>
+            <input id="username" name="username" type="text" autocomplete="username" required>
+            <label for="password">??????</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <button type="submit">????? ? ???????</button>
         </form>
-        <div class="hint">
-            Админ из env: SIEM_ADMIN_DEFAULT_USER / SIEM_ADMIN_DEFAULT_PASSWORD
-        </div>
+        <div class="meta">Base URL: {{ base_url }}</div>
     </div>
-</div>
 </body>
 </html>

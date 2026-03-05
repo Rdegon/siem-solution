@@ -2,50 +2,125 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>{% block title %}SIEM Web{% endblock %}</title>
+    <title>{% block title %}SIEM Console{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
-        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background-color: #0f172a; color: #e5e7eb; }
-        header { background-color: #020617; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; }
-        header .title { font-weight: 600; font-size: 18px; }
-        header nav a { color: #9ca3af; margin-right: 16px; text-decoration: none; }
-        header nav a.active { color: #e5e7eb; border-bottom: 2px solid #22c55e; padding-bottom: 2px; }
-        header nav a:hover { color: #f9fafb; }
-        .container { padding: 20px; }
-        table { border-collapse: collapse; width: 100%; font-size: 13px; }
-        th, td { border-bottom: 1px solid #1f2937; padding: 6px 8px; text-align: left; }
-        th { background-color: #020617; position: sticky; top: 0; z-index: 1; }
-        tr:nth-child(even) { background-color: #020617; }
-        tr:nth-child(odd) { background-color: #030712; }
-        .badge { display: inline-block; padding: 2px 6px; border-radius: 999px; font-size: 11px; }
-        .badge-low { background-color: #0f172a; color: #22c55e; }
-        .badge-medium { background-color: #0f172a; color: #facc15; }
-        .badge-high { background-color: #0f172a; color: #f97316; }
-        .badge-critical { background-color: #0f172a; color: #ef4444; }
-        .top-bar-right { font-size: 12px; color: #9ca3af; }
-        a.btn-link { color: #22c55e; text-decoration: none; font-size: 12px; }
-        a.btn-link:hover { text-decoration: underline; }
-        .chart-card { background-color: #020617; border-radius: 10px; padding: 10px; margin-bottom: 16px; }
+        :root { --border: rgba(111,146,183,.18); --text: #d8e7f7; --muted: #87a0bb; --accent: #40d4b5; --shadow: 0 24px 70px rgba(0,0,0,.42); }
+        * { box-sizing: border-box; }
+        body { margin: 0; min-height: 100vh; color: var(--text); font-family: "IBM Plex Sans", sans-serif; background: radial-gradient(circle at top left, rgba(64, 212, 181, .14), transparent 26%), radial-gradient(circle at top right, rgba(88, 166, 255, .12), transparent 24%), linear-gradient(180deg, #081220 0%, #040b14 100%); }
+        a { color: inherit; text-decoration: none; }
+        .shell { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
+        .sidebar { padding: 28px 20px; background: rgba(5,12,22,.78); border-right: 1px solid var(--border); backdrop-filter: blur(18px); position: sticky; top: 0; height: 100vh; }
+        .brand { margin-bottom: 28px; padding: 18px; border-radius: 24px; background: linear-gradient(145deg, rgba(64,212,181,.14), rgba(88,166,255,.08)); border: 1px solid rgba(88,166,255,.18); }
+        .brand h1 { margin: 0 0 8px; font: 700 22px "Space Grotesk", sans-serif; letter-spacing: .04em; }
+        .brand p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+        .nav-label, .sidebar-meta-title { margin: 20px 0 12px; color: var(--muted); font: 500 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: .14em; }
+        .nav-link { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; margin-bottom: 10px; border-radius: 16px; color: #c6d7ea; border: 1px solid transparent; transition: .18s ease; }
+        .nav-link:hover { background: rgba(255,255,255,.03); border-color: rgba(88,166,255,.14); }
+        .nav-link.active { background: linear-gradient(135deg, rgba(64,212,181,.16), rgba(88,166,255,.13)); border-color: rgba(88,166,255,.26); }
+        .nav-link span:first-child { font-weight: 600; }
+        .nav-pill, .badge { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 999px; font: 500 10px "IBM Plex Mono", monospace; letter-spacing: .08em; text-transform: uppercase; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.04); color: var(--muted); }
+        .badge.success { color: var(--accent); border-color: rgba(64,212,181,.25); }
+        .sidebar-meta { margin-top: 28px; padding: 18px; border-radius: 20px; background: rgba(255,255,255,.02); border: 1px solid var(--border); }
+        .sidebar-meta ul { list-style: none; padding: 0; margin: 0; }
+        .sidebar-meta li { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: var(--muted); font-size: 13px; }
+        .main { padding: 26px; }
+        .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+        .title-block h2 { margin: 0 0 6px; font: 700 28px "Space Grotesk", sans-serif; letter-spacing: .02em; }
+        .title-block p { margin: 0; color: var(--muted); font-size: 14px; }
+        .topbar-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .identity { padding: 12px 14px; border-radius: 16px; background: rgba(255,255,255,.03); border: 1px solid var(--border); color: var(--muted); font-size: 13px; }
+        .btn, button, select, input { font: inherit; }
+        .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 14px; border-radius: 14px; border: 1px solid var(--border); background: rgba(255,255,255,.03); color: var(--text); cursor: pointer; }
+        .btn.primary { background: linear-gradient(135deg, rgba(64,212,181,.20), rgba(88,166,255,.16)); border-color: rgba(88,166,255,.24); }
+        .btn.link { color: var(--accent); }
+        .panel { background: linear-gradient(180deg, rgba(11,22,38,.92), rgba(6,14,26,.94)); border: 1px solid var(--border); border-radius: 24px; box-shadow: var(--shadow); }
+        .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 20px 0; }
+        .panel-title { font: 600 16px "Space Grotesk", sans-serif; }
+        .panel-subtitle { color: var(--muted); font-size: 13px; margin-top: 4px; }
+        .panel-body { padding: 20px; }
+        .grid-2, .grid-4 { display: grid; gap: 18px; }
+        .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .kpi-card { padding: 18px; border-radius: 22px; background: linear-gradient(160deg, rgba(255,255,255,.04), rgba(255,255,255,.02)); border: 1px solid var(--border); }
+        .kpi-label { color: var(--muted); font: 500 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: .12em; }
+        .kpi-value { margin-top: 10px; font: 700 30px "Space Grotesk", sans-serif; }
+        .kpi-meta { margin-top: 10px; color: var(--muted); font-size: 13px; }
+        .error-box { margin-bottom: 18px; padding: 14px 16px; border-radius: 16px; background: rgba(251,113,133,.10); border: 1px solid rgba(251,113,133,.22); color: #ffd5dc; }
+        .toolbar { display: grid; grid-template-columns: minmax(0, 2fr) repeat(4, minmax(140px, .7fr)); gap: 12px; margin-bottom: 18px; }
+        .field, .select { width: 100%; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border); background: rgba(255,255,255,.035); color: var(--text); }
+        .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+        .chart { height: 220px; display: flex; align-items: flex-end; gap: 8px; }
+        .bar-col { flex: 1 1 0; display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 0; }
+        .bar { border-radius: 12px 12px 4px 4px; min-height: 8px; background: linear-gradient(180deg, rgba(64,212,181,.95), rgba(88,166,255,.42)); }
+        .bar-label { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .bar-value { font-size: 11px; color: #eff7ff; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid rgba(111,146,183,.12); vertical-align: top; }
+        th { color: var(--muted); font: 500 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: .10em; }
+        tr:hover td { background: rgba(255,255,255,.03); }
+        .table-wrap { overflow: auto; }
+        .mono, code, pre { font-family: "IBM Plex Mono", monospace; }
+        .severity { display: inline-flex; align-items: center; gap: 8px; text-transform: uppercase; font: 500 11px "IBM Plex Mono", monospace; letter-spacing: .10em; }
+        .dot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; background: currentColor; }
+        .sev-critical { color: #ff8da2; } .sev-high { color: #ffb266; } .sev-medium { color: #f7d16b; } .sev-low { color: #7ee0a5; } .sev-info { color: #86bfff; }
+        .chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
+        .chip { border: 1px solid rgba(88,166,255,.22); background: rgba(88,166,255,.08); color: #b9dcff; border-radius: 999px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+        .split { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(340px, .95fr); gap: 18px; }
+        .drawer { position: sticky; top: 26px; max-height: calc(100vh - 52px); overflow: auto; }
+        .drawer-empty { padding: 28px; color: var(--muted); text-align: center; }
+        .kv { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid rgba(111,146,183,.10); font-size: 13px; }
+        .kv:last-child { border-bottom: 0; }
+        .kv .key { color: var(--muted); }
+        .tabs { display: inline-flex; gap: 8px; padding: 5px; background: rgba(255,255,255,.03); border: 1px solid var(--border); border-radius: 14px; }
+        .tab { padding: 9px 14px; border-radius: 10px; color: var(--muted); }
+        .tab.active { background: rgba(88,166,255,.12); color: var(--text); }
+        .footnote { margin-top: 16px; color: var(--muted); font-size: 12px; }
+        @media (max-width: 1200px) { .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .split { grid-template-columns: 1fr; } .drawer { position: static; max-height: none; } .toolbar { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .sidebar { position: static; height: auto; } .main { padding: 18px; } .topbar { flex-direction: column; align-items: flex-start; } .grid-2, .grid-4 { grid-template-columns: 1fr; } .toolbar { grid-template-columns: 1fr; } }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
 <body>
-<header>
-    <div class="title">
-        SIEM Web — {{ request.app.state.instance_name }}
+    <div class="shell">
+        <aside class="sidebar">
+            <div class="brand">
+                <h1>SIEM Console</h1>
+                <p>Lab control plane ??? 4-VM deployment. Web ???????? ?????? FastAPI/Jinja, ? ?? ?????????? frontend bundle.</p>
+            </div>
+            <div class="nav-label">Workspace</div>
+            <a class="nav-link {% if active_page == 'dashboards' %}active{% endif %}" href="/dashboards"><span>Dashboards</span><span class="nav-pill">Live</span></a>
+            <a class="nav-link {% if active_page == 'events' %}active{% endif %}" href="/events"><span>Events</span><span class="nav-pill">SQL</span></a>
+            <a class="nav-link {% if active_page == 'alerts' %}active{% endif %}" href="/alerts"><span>Alerts</span><span class="nav-pill">SOC</span></a>
+            <a class="nav-link {% if active_page == 'assets' %}active{% endif %}" href="/assets"><span>Assets</span><span class="nav-pill">24h</span></a>
+            <a class="nav-link {% if active_page == 'resources' %}active{% endif %}" href="/resources"><span>Resources</span><span class="nav-pill">Infra</span></a>
+            <div class="sidebar-meta">
+                <div class="sidebar-meta-title">Context</div>
+                <ul>
+                    <li><span>Instance</span><strong>{{ request.app.state.instance_name }}</strong></li>
+                    <li><span>Environment</span><span class="badge success">{{ request.app.state.env }}</span></li>
+                    <li><span>User</span><strong>{{ user.username if user is defined else 'guest' }}</strong></li>
+                </ul>
+            </div>
+        </aside>
+        <main class="main">
+            <div class="topbar">
+                <div class="title-block">
+                    <h2>{% block page_title %}SIEM Console{% endblock %}</h2>
+                    <p>{% block page_subtitle %}Operational view for ingest, events and alert triage.{% endblock %}</p>
+                </div>
+                <div class="topbar-actions">
+                    <div class="identity">{{ user.username if user is defined else '' }} ? {{ request.app.state.env }}</div>
+                    <a class="btn link" href="/auth/logout">?????</a>
+                </div>
+            </div>
+            {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+            {% block content %}{% endblock %}
+        </main>
     </div>
-    <nav>
-        <a href="/alerts_agg" class="{% if request.url.path.startswith('/alerts_agg') %}active{% endif %}">Агрегированные алерты</a>
-        <a href="/alerts_raw" class="{% if request.url.path.startswith('/alerts_raw') %}active{% endif %}">Сырые алерты</a>
-        <a href="/events" class="{% if request.url.path.startswith('/events') %}active{% endif %}">События</a>
-    </nav>
-    <div class="top-bar-right">
-        {{ user.username if user is defined else '' }} ({{ request.app.state.env }}) |
-        <a class="btn-link" href="/auth/logout">Выйти</a>
-    </div>
-</header>
-<div class="container">
-    {% block content %}{% endblock %}
-</div>
+    {% block extra_scripts %}{% endblock %}
 </body>
 </html>

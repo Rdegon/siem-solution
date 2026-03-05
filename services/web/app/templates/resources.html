@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Resources{% endblock %}
+{% block page_title %}Resources{% endblock %}
+{% block page_subtitle %}?????? storage/rule inventory ? ??????? ???????????????? ????? ???????? lab deployment.{% endblock %}
+{% block content %}
+<div class="grid-4">
+    <section class="kpi-card"><div class="kpi-label">ClickHouse</div><div class="kpi-value">{{ 'OK' if overview.clickhouse_ok else 'FAIL' }}</div><div class="kpi-meta">Web-backed storage check</div></section>
+    <section class="kpi-card"><div class="kpi-label">Events Total</div><div class="kpi-value">{{ overview.events_total or 0 }}</div><div class="kpi-meta">????????? ???????: {{ overview.last_event_ts or 'n/a' }}</div></section>
+    <section class="kpi-card"><div class="kpi-label">Raw / Agg</div><div class="kpi-value">{{ overview.alerts_raw_total or 0 }} / {{ overview.alerts_agg_total or 0 }}</div><div class="kpi-meta">????? ????? ???????</div></section>
+    <section class="kpi-card"><div class="kpi-label">Rules</div><div class="kpi-value">{{ overview.normalizer_rules or 0 }}/{{ overview.filter_rules or 0 }}/{{ overview.stream_rules or 0 }}</div><div class="kpi-meta">Normalizer / Filter / Stream</div></section>
+</div>
+
+<div class="grid-2" style="margin-top:18px; align-items:start;">
+    <section class="panel">
+        <div class="panel-header"><div><div class="panel-title">Storage & Rule Inventory</div><div class="panel-subtitle">??????? ?????????? ???????? ?????????</div></div></div>
+        <div class="panel-body">
+            <div class="kv"><div class="key">ClickHouse status</div><div>{{ 'healthy' if overview.clickhouse_ok else 'unreachable' }}</div></div>
+            <div class="kv"><div class="key">Events rows</div><div>{{ overview.events_total or 0 }}</div></div>
+            <div class="kv"><div class="key">alerts_raw rows</div><div>{{ overview.alerts_raw_total or 0 }}</div></div>
+            <div class="kv"><div class="key">alerts_agg rows</div><div>{{ overview.alerts_agg_total or 0 }}</div></div>
+            <div class="kv"><div class="key">Enabled normalizer rules</div><div>{{ overview.normalizer_rules or 0 }}</div></div>
+            <div class="kv"><div class="key">Enabled filter rules</div><div>{{ overview.filter_rules or 0 }}</div></div>
+            <div class="kv"><div class="key">Enabled stream rules</div><div>{{ overview.stream_rules or 0 }}</div></div>
+        </div>
+    </section>
+    <section class="panel">
+        <div class="panel-header"><div><div class="panel-title">Reporting Sources</div><div class="panel-subtitle">?????????, ??????? ??????? ???? ?????? ?? ????????? 24 ????</div></div></div>
+        <div class="panel-body table-wrap">
+            <table>
+                <thead><tr><th>Source</th><th>Events</th><th>Last Seen</th></tr></thead>
+                <tbody>
+                {% for source in sources %}
+                <tr>
+                    <td class="mono">{{ source.log_source }}</td>
+                    <td>{{ source.events }}</td>
+                    <td>{{ source.last_seen }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            <div class="footnote">??? production ????? ??? ????? ?????? Redis, ingest ? systemd health ?? ???? ?????. ?????? ???????? ???????? ?????? ?? ??????, ????????? web ????? ClickHouse.</div>
+        </div>
+    </section>
+</div>
+{% endblock %}

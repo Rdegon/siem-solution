@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Dashboards{% endblock %}
+{% block page_title %}Dashboards{% endblock %}
+{% block page_subtitle %}????? ingest pressure, alert volume ? ???????? ?????????? ?? ????????? 24 ????.{% endblock %}
+{% block content %}
+<div class="grid-4">
+    <section class="kpi-card"><div class="kpi-label">Events 24h</div><div class="kpi-value">{{ metrics.events_24h or 0 }}</div><div class="kpi-meta">????????? ???: {{ metrics.events_1h or 0 }}</div></section>
+    <section class="kpi-card"><div class="kpi-label">Agg Alerts 24h</div><div class="kpi-value">{{ metrics.agg_alerts_24h or 0 }}</div><div class="kpi-meta">Raw alerts: {{ metrics.raw_alerts_24h or 0 }}</div></section>
+    <section class="kpi-card"><div class="kpi-label">Critical Events</div><div class="kpi-value">{{ metrics.critical_events_24h or 0 }}</div><div class="kpi-meta">?????????? ??? ??????? ??????????</div></section>
+    <section class="kpi-card"><div class="kpi-label">Active Sources</div><div class="kpi-value">{{ metrics.active_sources_24h or 0 }}</div><div class="kpi-meta">?????, ??????????? ?????? ?? 24h</div></section>
+</div>
+
+<div class="grid-2" style="margin-top:18px; align-items:start;">
+    <section class="panel">
+        <div class="panel-header"><div><div class="panel-title">Event Pressure</div><div class="panel-subtitle">30-minute buckets for the last 24 hours</div></div></div>
+        <div class="panel-body"><div id="dashboard-timeline" class="chart"></div></div>
+    </section>
+    <section class="panel">
+        <div class="panel-header"><div><div class="panel-title">Severity Mix</div><div class="panel-subtitle">????????????? ?????? ??????????? ?? ????????</div></div></div>
+        <div class="panel-body">
+            <div class="chip-row">
+                {% for item in severity_breakdown %}
+                <span class="chip">{{ item.severity }}: {{ item.cnt }}</span>
+                {% endfor %}
+            </div>
+            <div class="footnote">??? ??????????? snapshot. ??? ??????????? ????????? ??????????? ???????????? severity ? ??????? ?????????.</div>
+        </div>
+    </section>
+</div>
+
+<div class="grid-2" style="margin-top:18px; align-items:start;">
+    <section class="panel">
+        <div class="panel-header"><div><div class="panel-title">Top Sources</div><div class="panel-subtitle">???????? ?????? ????????? ?????? ?? 24h</div></div></div>
+        <div class="panel-body table-wrap">
+            <table>
+                <thead><tr><th>Source</th><th>Events</th><th>Last Seen</th><th>High/Critical</th></tr></thead>
+                <tbody>
+                {% for source in top_sources %}
+                <tr>
+                    <td class="mono">{{ source.log_source }}</td>
+                    <td>{{ source.events }}</td>
+                    <td>{{ source.last_seen }}</td>
+                    <td>{{ source.high_count + source.critical_count }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+    <section class="panel">
+        <div class="panel-header"><div><div class="panel-title">Recent Alerts</div><div class="panel-subtitle">????????? ???????? ?????? ??? triage</div></div><a class="btn" href="/alerts">??????? Alerts</a></div>
+        <div class="panel-body table-wrap">
+            <table>
+                <thead><tr><th>Last Seen</th><th>Rule</th><th>Severity</th><th>Hits</th></tr></thead>
+                <tbody>
+                {% for alert in recent_alerts %}
+                <tr>
+                    <td>{{ alert.ts_last }}</td>
+                    <td>{{ alert.rule_name }}</td>
+                    <td><span class="severity sev-{{ alert.severity }}"><span class="dot"></span>{{ alert.severity }}</span></td>
+                    <td>{{ alert.hits }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+    const timeline = {{ timeline | tojson }};
+    const container = document.getElementById('dashboard-timeline');
+    const maxValue = Math.max(...timeline.map(item => item.cnt), 1);
+    container.innerHTML = timeline.map(item => {
+      const height = Math.max(10, Math.round((item.cnt / maxValue) * 170));
+      const label = item.bucket.slice(5, 16);
+      return `<div class="bar-col"><div class="bar-value">${item.cnt}</div><div class="bar" style="height:${height}px"></div><div class="bar-label">${label}</div></div>`;
+    }).join('');
+</script>
+{% endblock %}
