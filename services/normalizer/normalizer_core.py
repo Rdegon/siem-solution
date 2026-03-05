@@ -150,7 +150,9 @@ def apply_rules(
 
     rule = rules[0]
 
-    uem: Dict[str, Any] = {}
+    uem: Dict[str, Any] = {
+        str(k): v for k, v in raw_event.items() if '.' in str(k) or str(k) in {'message', 'severity', 'log_source'}
+    }
 
     # Применяем JMESPath-мэппинг
     for uem_field, compiled_expr in rule.compiled_mapping.items():

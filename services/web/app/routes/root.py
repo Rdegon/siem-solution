@@ -4,7 +4,6 @@ from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
 from ..config import CONFIG
-from ..security import CurrentUser
 
 router = APIRouter()
 
@@ -12,7 +11,6 @@ router = APIRouter()
 @router.get("/", include_in_schema=False)
 async def index(
     request: Request,
-    user: CurrentUser,
 ):
     """
     Главная страница Web UI.
