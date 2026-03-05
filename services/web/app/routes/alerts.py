@@ -1,9 +1,9 @@
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
-from app.routes.auth import get_current_user
+from .auth import get_current_user
 from ..deps import fetch_alerts_agg, fetch_alerts_raw
 from ..templates import templates
 
@@ -13,19 +13,15 @@ router = APIRouter()
 @router.get("/alerts_raw", response_class=HTMLResponse)
 async def alerts_raw_page(
     request: Request,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user = Depends(get_current_user),
 ) -> HTMLResponse:
-    """
-    Страница сырых алертов.
-    При ошибке ClickHouse показываем сообщение и пустой список (без 500).
-    """
     error: Optional[str] = None
-    alerts: List[Dict[str, Any]] = []
+    alerts: List[dict] = []
 
     try:
         alerts = fetch_alerts_raw(limit=200)
     except Exception as exc:  # noqa: BLE001
-        error = f"Ошибка обращения к ClickHouse при чтении сырых алертов: {exc!s}"
+        error = f"?????? ????????? ? ClickHouse ??? ?????? ????? ???????: {exc!s}"
 
     return templates.TemplateResponse(
         "alerts_raw.html",
@@ -41,19 +37,15 @@ async def alerts_raw_page(
 @router.get("/alerts_agg", response_class=HTMLResponse)
 async def alerts_agg_page(
     request: Request,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user = Depends(get_current_user),
 ) -> HTMLResponse:
-    """
-    Страница агрегированных алертов.
-    Также ловим ошибки ClickHouse и не роняем 500.
-    """
     error: Optional[str] = None
-    alerts_agg: List[Dict[str, Any]] = []
+    alerts_agg: List[dict] = []
 
     try:
         alerts_agg = fetch_alerts_agg(limit=200)
     except Exception as exc:  # noqa: BLE001
-        error = f"Ошибка обращения к ClickHouse при чтении агрегированных алертов: {exc!s}"
+        error = f"?????? ????????? ? ClickHouse ??? ?????? ?????????????? ???????: {exc!s}"
 
     return templates.TemplateResponse(
         "alerts_agg.html",
