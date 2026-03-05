@@ -66,7 +66,7 @@ async def login_submit(
             {
                 'request': request,
                 'base_url': CONFIG.base_url,
-                'error': '???????? ????? ??? ??????',
+                'error': 'Invalid username or password',
             },
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
@@ -87,7 +87,7 @@ async def login_submit(
 
 
 @router.get('/auth/logout', include_in_schema=False)
-async def logout(request: Request, user = Depends(get_current_user)):
+async def logout(request: Request, user=Depends(get_current_user)):
     response = RedirectResponse(url='/auth/login', status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie('access_token')
     return response

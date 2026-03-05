@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>SIEM Console Login</title>
@@ -22,14 +22,14 @@
 <body>
     <div class="card">
         <h1>SIEM Console</h1>
-        <p>Interactive MVP web-console for the lab SIEM deployment. ??????????? ????? ??? triage-????????????? ?? ???????? ? ???????.</p>
+        <p>Interactive lab console for the 4-VM SIEM deployment. Sign in to review dashboards, events, alerts, assets, and resources.</p>
         {% if error %}<div class="error">{{ error }}</div>{% endif %}
         <form method="post" action="/auth/login">
-            <label for="username">????????????</label>
+            <label for="username">Username</label>
             <input id="username" name="username" type="text" autocomplete="username" required>
-            <label for="password">??????</label>
+            <label for="password">Password</label>
             <input id="password" name="password" type="password" autocomplete="current-password" required>
-            <button type="submit">????? ? ???????</button>
+            <button type="submit">Sign in</button>
         </form>
         <div class="meta">Base URL: {{ base_url }}</div>
     </div>
