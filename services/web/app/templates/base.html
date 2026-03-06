@@ -119,13 +119,13 @@
             background: linear-gradient(145deg, #1f7ae0, #1ed7a4); font: 700 22px var(--font-display);
             box-shadow: 0 16px 32px rgba(31, 122, 224, 0.24);
         }
-        .brand-toggle, .topbar-icon, .theme-toggle {
+        .brand-toggle, .topbar-icon, .theme-toggle, .timezone-toggle {
             border: 1px solid var(--border-strong); border-radius: 14px; background: var(--surface-soft); color: var(--text);
             min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center;
             cursor: pointer; transition: transform .16s ease, background .16s ease, border-color .16s ease;
         }
         .brand-toggle { color: var(--sidebar-text); background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.10); }
-        .brand-toggle:hover, .topbar-icon:hover, .theme-toggle:hover { transform: translateY(-1px); }
+        .brand-toggle:hover, .topbar-icon:hover, .theme-toggle:hover, .timezone-toggle:hover { transform: translateY(-1px); }
         .btn-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
         .sidebar-brand h1 { margin: 0; font: 700 26px/1 var(--font-display); letter-spacing: -.04em; }
         .sidebar-brand p { margin: 0; color: var(--sidebar-soft); font-size: 13px; line-height: 1.5; }
@@ -295,8 +295,8 @@
         .message-cell { max-width: 760px; }
         .message-cell span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; line-height: 1.5; }
         .topbar-chip { display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 16px; background: var(--surface-soft); border: 1px solid var(--border); color: var(--text-soft); }
-        .theme-toggle { padding-inline: 12px; gap: 10px; }
-        .theme-toggle span:last-child, .topbar-icon span:last-child, .brand-toggle span:last-child { font-size: 12px; font-weight: 700; }
+        .theme-toggle, .timezone-toggle { padding-inline: 12px; gap: 10px; }
+        .theme-toggle span:last-child, .timezone-toggle span:last-child, .topbar-icon span:last-child, .brand-toggle span:last-child { font-size: 12px; font-weight: 700; }
         @media (max-width: 1280px) {
             .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .split, .results-layout { grid-template-columns: 1fr; }
@@ -376,6 +376,7 @@
                     </div>
                     <div class="topbar-actions">
                         <span class="badge sql">ClickHouse live</span>
+                        <button class="timezone-toggle" id="timezoneToggle" type="button" aria-label="Set time zone"><span class="btn-label">TZ</span><span id="timezoneToggleLabel">Local</span></button>
                         <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme"><span class="btn-label" id="themeToggleIcon">DK</span><span id="themeToggleLabel">Dark</span></button>
                         <span class="status-pill">{{ user.username if user is defined else 'guest' }}</span>
                         <a class="btn ghost" href="/auth/logout">Sign out</a>
@@ -392,6 +393,48 @@
                 return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char];
             });
         }
+        function isValidTimeZone(value) {
+            try {
+                Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+                return true;
+            } catch (error) {
+                return false;
+            }
+        }
+        function resolveUserTimeZone() {
+            const stored = localStorage.getItem('rdegon_timezone');
+            if (stored && isValidTimeZone(stored)) return stored;
+            const browser = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+            return isValidTimeZone(browser) ? browser : 'UTC';
+        }
+        function formatDisplayTimestamp(value) {
+            const text = String(value || '').trim();
+            if (!text) return '';
+            const normalized = text.includes('T') ? text : text.replace(' ', 'T');
+            const iso = /Z$|[+-]\d{2}:\d{2}$/.test(normalized) ? normalized : `${normalized}Z`;
+            const dt = new Date(iso);
+            if (Number.isNaN(dt.getTime())) return text;
+            return new Intl.DateTimeFormat('sv-SE', {
+                timeZone: resolveUserTimeZone(),
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+            }).format(dt).replace(',', '');
+        }
+        function applyTimestampFormatting(root = document) {
+            root.querySelectorAll('[data-ts]').forEach((node) => {
+                const raw = node.dataset.ts || '';
+                node.textContent = formatDisplayTimestamp(raw);
+                node.title = `UTC: ${raw}`;
+            });
+        }
+        window.resolveUserTimeZone = resolveUserTimeZone;
+        window.formatDisplayTimestamp = formatDisplayTimestamp;
+        window.applyTimestampFormatting = applyTimestampFormatting;
         function severityClass(value) {
             const sev = String(value || 'info').toLowerCase();
             return ['critical', 'high', 'medium', 'low', 'info'].includes(sev) ? 'sev-' + sev : 'sev-info';
@@ -432,6 +475,8 @@
             const themeToggle = document.getElementById('themeToggle');
             const themeToggleIcon = document.getElementById('themeToggleIcon');
             const themeToggleLabel = document.getElementById('themeToggleLabel');
+            const timezoneToggle = document.getElementById('timezoneToggle');
+            const timezoneToggleLabel = document.getElementById('timezoneToggleLabel');
             const sidebarToggle = document.getElementById('sidebarToggle');
             const sidebarToggleLabel = document.getElementById('sidebarToggleLabel');
             const sidebarMobileToggle = document.getElementById('sidebarMobileToggle');
@@ -450,12 +495,34 @@
                 const collapsed = body.dataset.sidebar === 'collapsed';
                 if (sidebarToggleLabel) sidebarToggleLabel.textContent = collapsed ? 'Show' : 'Hide';
             }
+            function syncTimeZoneLabel() {
+                const timezone = resolveUserTimeZone();
+                timezoneToggleLabel.textContent = timezone.length > 24 ? timezone.slice(0, 21) + '...' : timezone;
+                timezoneToggle.title = `Time zone: ${timezone}`;
+            }
             function closeMobileSidebar() { body.dataset.sidebarMobile = 'closed'; }
             function openMobileSidebar() { body.dataset.sidebarMobile = 'open'; }
             themeToggle.addEventListener('click', function() {
                 body.dataset.theme = body.dataset.theme === 'dark' ? 'light' : 'dark';
                 localStorage.setItem('rdegon_theme', body.dataset.theme);
                 syncThemeLabel();
+            });
+            timezoneToggle.addEventListener('click', function() {
+                const current = localStorage.getItem('rdegon_timezone') || '';
+                const entered = window.prompt('Enter IANA time zone. Leave empty to use browser local time.', current || resolveUserTimeZone());
+                if (entered === null) return;
+                const next = entered.trim();
+                if (!next) {
+                    localStorage.removeItem('rdegon_timezone');
+                } else if (isValidTimeZone(next)) {
+                    localStorage.setItem('rdegon_timezone', next);
+                } else {
+                    window.alert('Unsupported time zone. Use an IANA name like Europe/Moscow or America/New_York.');
+                    return;
+                }
+                syncTimeZoneLabel();
+                applyTimestampFormatting(document);
+                window.dispatchEvent(new CustomEvent('rdegon:timezone-changed'));
             });
             sidebarToggle.addEventListener('click', function() {
                 if (!desktopMq.matches) { openMobileSidebar(); return; }
@@ -478,6 +545,8 @@
             });
             syncThemeLabel();
             syncSidebarLabel();
+            syncTimeZoneLabel();
+            applyTimestampFormatting(document);
         })();
     </script>
     {% block extra_scripts %}{% endblock %}

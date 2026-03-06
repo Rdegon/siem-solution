@@ -1,11 +1,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .auth import get_current_user
-from ..deps import fetch_alert_metrics, fetch_alerts_agg, fetch_alerts_raw
+from ..deps import fetch_alert_metrics, fetch_alerts_agg, fetch_alerts_raw, update_alert_assignment
 from ..templates import templates
 
 router = APIRouter()
@@ -50,3 +50,24 @@ async def alerts_raw_redirect(request: Request, user=Depends(get_current_user)):
 @router.get('/alerts_agg', include_in_schema=False)
 async def alerts_agg_redirect(request: Request, user=Depends(get_current_user)):
     return RedirectResponse(url='/alerts?view=agg', status_code=307)
+
+
+@router.post('/api/alerts/{view}/{record_id}', response_class=JSONResponse)
+async def update_alert_api(
+    view: str,
+    record_id: str,
+    payload: dict = Body(default={}),
+    user=Depends(get_current_user),
+) -> JSONResponse:
+    if view not in {'raw', 'agg'}:
+        return JSONResponse({'error': 'Unsupported alert view'}, status_code=400)
+    try:
+        result = update_alert_assignment(
+            view,
+            record_id,
+            status=str(payload.get('status', 'new') or 'new'),
+            assignee=str(payload.get('assignee', '') or ''),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({'error': str(exc)}, status_code=400)
+    return JSONResponse(result)

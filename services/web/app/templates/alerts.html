@@ -13,7 +13,7 @@
 </div>
 <section class="panel"><div class="panel-body" style="display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:center;"><div class="chip-row"><a class="chip {% if view == 'agg' %}active{% endif %}" href="/alerts?view=agg">Aggregated incidents</a><a class="chip {% if view == 'raw' %}active{% endif %}" href="/alerts?view=raw">Raw alert queue</a><a class="chip" href="/events?q=message%20ILIKE%20'%25auditd:%25'">Open auditd events</a></div><div class="page-note">Current view: <strong>{{ 'raw alerts' if view == 'raw' else 'aggregated incidents' }}</strong></div></div></section>
 <div class="split">
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Queue</h3><p class="panel-subtitle">Click any incident or alert to inspect its context and pivot into Events.</p></div></div><div class="panel-body table-wrap"><table id="alertsTable"><thead>{% if view == 'agg' %}<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Alerts</th><th>Entities</th><th>Status</th></tr>{% else %}<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Source</th><th>Status</th></tr>{% endif %}</thead><tbody>{% if view == 'agg' %}{% for row in alerts_agg %}<tr data-index="{{ loop.index0 }}" class="{% if loop.first %}active{% endif %}"><td>{{ row.ts_last }}</td><td>{{ row.rule_name }}</td><td><span class="severity sev-{{ row.severity_agg }}">{{ row.severity_agg }}</span></td><td>{{ row.count_alerts }}</td><td>{{ row.unique_entities }}</td><td><span class="status-pill">{{ row.status }}</span></td></tr>{% endfor %}{% else %}{% for row in alerts_raw %}<tr data-index="{{ loop.index0 }}" class="{% if loop.first %}active{% endif %}"><td>{{ row.ts_last }}</td><td>{{ row.rule_name }}</td><td><span class="severity sev-{{ row.severity }}">{{ row.severity }}</span></td><td>{{ row.hits }}</td><td>{{ row.source }}</td><td><span class="status-pill">{{ row.status }}</span></td></tr>{% endfor %}{% endif %}</tbody></table></div></section>
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Queue</h3><p class="panel-subtitle">Click any incident or alert to inspect its context, assign an analyst, update the lifecycle status, and pivot into Events.</p></div></div><div class="panel-body table-wrap"><table id="alertsTable"><thead>{% if view == 'agg' %}<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Alerts</th><th>Entities</th><th>Status</th><th>Assignee</th></tr>{% else %}<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Source</th><th>Status</th><th>Assignee</th></tr>{% endif %}</thead><tbody>{% if view == 'agg' %}{% for row in alerts_agg %}<tr data-index="{{ loop.index0 }}" class="{% if loop.first %}active{% endif %}"><td class="ts-cell" data-ts="{{ row.ts_last }}">{{ row.ts_last }}</td><td>{{ row.rule_name }}</td><td><span class="severity sev-{{ row.severity_agg }}">{{ row.severity_agg }}</span></td><td>{{ row.count_alerts }}</td><td>{{ row.unique_entities }}</td><td><span class="status-pill">{{ row.status }}</span></td><td>{{ row.assignee or 'unassigned' }}</td></tr>{% endfor %}{% else %}{% for row in alerts_raw %}<tr data-index="{{ loop.index0 }}" class="{% if loop.first %}active{% endif %}"><td class="ts-cell" data-ts="{{ row.ts_last }}">{{ row.ts_last }}</td><td>{{ row.rule_name }}</td><td><span class="severity sev-{{ row.severity }}">{{ row.severity }}</span></td><td>{{ row.hits }}</td><td>{{ row.source }}</td><td><span class="status-pill">{{ row.status }}</span></td><td>{{ row.assignee or 'unassigned' }}</td></tr>{% endfor %}{% endif %}</tbody></table></div></section>
     <aside class="panel drawer-card"><div class="panel-header"><div><h3 class="panel-title">Details</h3><p class="panel-subtitle">Selected incident or raw alert context.</p></div></div><div class="panel-body" id="alertDrawer"><div class="drawer-empty">Select an item from the queue to see the full context and shortcuts into Events.</div></div></aside>
 </div>
 </div>
@@ -28,9 +28,67 @@ const alertDrawer = document.getElementById('alertDrawer');
 const rowNodes = Array.from(document.querySelectorAll('#alertsTable tbody tr'));
 let selectedIndex = rows.length ? 0 : null;
 function eventLinkForRow(row) { if (mode === 'raw' && row.source) return `/events?q=${encodeURIComponent(`log_source = '${row.source}'`)}`; if (row.entity_key) return `/events?q=${encodeURIComponent(`log_source = '${row.entity_key}'`)}`; return `/events?q=${encodeURIComponent(`message ILIKE '%${row.rule_name}%'`)}`; }
-function renderDrawer(row) { if (!row) { alertDrawer.innerHTML = '<div class="drawer-empty">Select an item from the queue to see the full context and shortcuts into Events.</div>'; return; } const contextBlock = mode === 'raw' ? row.context_json : row.group_key_json; const samplesBlock = mode === 'agg' ? row.samples_json : ''; const chips = `<div class="chip-row" style="margin-bottom:14px;"><a class="chip active" href="${eventLinkForRow(row)}">Open related events</a><span class="chip">rule_id: ${escapeHtml(row.rule_id)}</span><span class="chip">status: ${escapeHtml(row.status)}</span></div>`; const details = Object.entries(row).map(([key, value]) => `<div class="kv"><div class="kv-key">${escapeHtml(key)}</div><div class="kv-value">${escapeHtml(value)}</div></div>`).join(''); alertDrawer.innerHTML = `${chips}<div class="kv-list">${details}</div>${contextBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(contextBlock)}</div>` : ''}${samplesBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(samplesBlock)}</div>` : ''}`; }
+async function saveAssignment(row, statusValue, assigneeValue) {
+    const recordId = mode === 'raw' ? row.alert_id : row.agg_id;
+    const response = await fetch(`/api/alerts/${mode}/${recordId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: statusValue, assignee: assigneeValue }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Update failed');
+    row.status = statusValue;
+    row.assignee = assigneeValue;
+    row.updated_ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    activateRow(selectedIndex);
+}
+function renderDrawer(row) {
+    if (!row) {
+        alertDrawer.innerHTML = '<div class="drawer-empty">Select an item from the queue to see the full context and shortcuts into Events.</div>';
+        return;
+    }
+    const contextBlock = mode === 'raw' ? row.context_json : row.group_key_json;
+    const samplesBlock = mode === 'agg' ? row.samples_json : '';
+    const chips = `<div class="chip-row" style="margin-bottom:14px;"><a class="chip active" href="${eventLinkForRow(row)}">Open related events</a><span class="chip">rule_id: ${escapeHtml(row.rule_id)}</span><span class="chip">status: ${escapeHtml(row.status)}</span>${row.assignee ? `<span class="chip">assignee: ${escapeHtml(row.assignee)}</span>` : ''}</div>`;
+    const lifecycle = `
+        <div class="grid-2" style="margin-bottom:14px;">
+            <div>
+                <label class="hint" for="statusSelect">Status</label>
+                <select id="statusSelect" class="select">
+                    ${['new', 'assigned', 'in_progress', 'closed'].map((value) => `<option value="${value}" ${row.status === value ? 'selected' : ''}>${value}</option>`).join('')}
+                </select>
+            </div>
+            <div>
+                <label class="hint" for="assigneeInput">Assignee</label>
+                <input id="assigneeInput" class="field" value="${escapeHtml(row.assignee || '')}" placeholder="tier1-analyst">
+            </div>
+        </div>
+        <div class="chip-row" style="margin-bottom:14px;">
+            <button type="button" class="btn primary" id="saveAlertStateBtn">Save workflow state</button>
+        </div>
+    `;
+    const details = Object.entries(row).map(([key, value]) => {
+        const formatted = key.includes('ts') ? formatDisplayTimestamp(value) : escapeHtml(value);
+        return `<div class="kv"><div class="kv-key">${escapeHtml(key)}</div><div class="kv-value">${formatted}</div></div>`;
+    }).join('');
+    alertDrawer.innerHTML = `${chips}${lifecycle}<div class="kv-list">${details}</div>${contextBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(contextBlock)}</div>` : ''}${samplesBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(samplesBlock)}</div>` : ''}`;
+    const saveBtn = document.getElementById('saveAlertStateBtn');
+    saveBtn.addEventListener('click', async () => {
+        const statusValue = document.getElementById('statusSelect').value;
+        const assigneeValue = document.getElementById('assigneeInput').value.trim();
+        saveBtn.disabled = true;
+        try {
+            await saveAssignment(row, statusValue, assigneeValue);
+        } catch (error) {
+            alert(error.message || String(error));
+        } finally {
+            saveBtn.disabled = false;
+        }
+    });
+}
 function activateRow(index) { selectedIndex = index; rowNodes.forEach((node, idx) => node.classList.toggle('active', idx === index)); renderDrawer(rows[index] || null); }
 rowNodes.forEach((node, index) => node.addEventListener('click', () => activateRow(index)));
+applyTimestampFormatting(document);
 if (selectedIndex !== null) activateRow(selectedIndex); else renderDrawer(null);
 </script>
 {% endblock %}

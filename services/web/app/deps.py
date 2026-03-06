@@ -30,6 +30,8 @@ EVENT_VIEW_SQL = """
         event_id,
         category,
         subcategory,
+        event_action,
+        event_outcome,
         if(src_ip = 0, '', IPv4NumToString(src_ip)) AS src_ip,
         if(dst_ip = 0, '', IPv4NumToString(dst_ip)) AS dst_ip,
         src_port,
@@ -37,8 +39,15 @@ EVENT_VIEW_SQL = """
         device_vendor,
         device_product,
         log_source,
+        host_name,
+        user_name,
+        target_user,
+        process_name,
+        process_executable,
+        process_command,
         lower(severity) AS severity,
         message,
+        normalized_json,
         tags
     FROM siem.events
 """.strip()
@@ -47,6 +56,8 @@ EVENT_VIEW_COLUMNS = [
     'event_id',
     'category',
     'subcategory',
+    'event_action',
+    'event_outcome',
     'src_ip',
     'dst_ip',
     'src_port',
@@ -54,8 +65,15 @@ EVENT_VIEW_COLUMNS = [
     'device_vendor',
     'device_product',
     'log_source',
+    'host_name',
+    'user_name',
+    'target_user',
+    'process_name',
+    'process_executable',
+    'process_command',
     'severity',
     'message',
+    'normalized_json',
     'tags',
 ]
 ALLOWED_EVENT_FIELDS = set(EVENT_VIEW_COLUMNS)
@@ -70,6 +88,7 @@ EVENT_VIEW_FROM_RE = re.compile(r"\b(from|join)\s+events_view\b", re.IGNORECASE)
 EVENT_TABLE_FROM_RE = re.compile(r"\b(from|join)\s+siem\.events\b", re.IGNORECASE)
 SIGMA_CONDITION_TOKEN_RE = re.compile(r"\(|\)|\b(?:and|or|not)\b|[A-Za-z0-9_*]+", re.IGNORECASE)
 DETECTION_RULE_TABLE = "siem.detection_rule_catalog"
+ACTIVE_LIST_TABLE = "siem.active_list_items"
 
 
 @lru_cache(maxsize=1)
@@ -126,8 +145,11 @@ def _search_expr_for_token(token: str) -> str:
     quoted = _sql_quote(token)
     haystack = (
         "concat(toString(ts), ' ', toString(event_id), ' ', category, ' ', subcategory, ' ', "
+        "event_action, ' ', event_outcome, ' ', "
         "src_ip, ' ', dst_ip, ' ', toString(src_port), ' ', toString(dst_port), ' ', "
-        "device_vendor, ' ', device_product, ' ', log_source, ' ', severity, ' ', message, ' ', tags)"
+        "device_vendor, ' ', device_product, ' ', log_source, ' ', host_name, ' ', user_name, ' ', "
+        "target_user, ' ', process_name, ' ', process_executable, ' ', process_command, ' ', "
+        "severity, ' ', message, ' ', normalized_json, ' ', tags)"
     )
     return f"positionCaseInsensitiveUTF8({haystack}, {quoted}) > 0"
 
@@ -212,6 +234,8 @@ def _build_events_sql(query_text: str, window: str, limit: int) -> str:
         f"    event_id,\n"
         f"    category,\n"
         f"    subcategory,\n"
+        f"    event_action,\n"
+        f"    event_outcome,\n"
         f"    src_ip,\n"
         f"    dst_ip,\n"
         f"    src_port,\n"
@@ -219,8 +243,15 @@ def _build_events_sql(query_text: str, window: str, limit: int) -> str:
         f"    device_vendor,\n"
         f"    device_product,\n"
         f"    log_source,\n"
+        f"    host_name,\n"
+        f"    user_name,\n"
+        f"    target_user,\n"
+        f"    process_name,\n"
+        f"    process_executable,\n"
+        f"    process_command,\n"
         f"    severity,\n"
         f"    message,\n"
+        f"    normalized_json,\n"
         f"    tags\n"
         f"FROM ({EVENT_VIEW_SQL}) AS events_view\n"
         f"WHERE {_event_time_filter(window)}\n"
@@ -288,6 +319,7 @@ def execute_event_query(query_text: str, window: str = '24h', limit: int = EVENT
 
 
 def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
+    ensure_incident_workflow_support()
     query = f"""
         SELECT
             ts,
@@ -302,7 +334,9 @@ def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
             entity_key,
             group_key_json,
             samples_json,
-            status
+            status,
+            assignee,
+            updated_ts
         FROM siem.alerts_agg
         ORDER BY ts_last DESC
         LIMIT {int(limit)}
@@ -324,12 +358,15 @@ def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
                 'group_key_json': row['group_key_json'],
                 'samples_json': row['samples_json'],
                 'status': str(row['status']).lower(),
+                'assignee': row.get('assignee', ''),
+                'updated_ts': _fmt(row.get('updated_ts')),
             }
         )
     return rows
 
 
 def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
+    ensure_incident_workflow_support()
     query = f"""
         SELECT
             ts,
@@ -344,7 +381,9 @@ def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
             hits,
             context_json,
             source,
-            status
+            status,
+            assignee,
+            updated_ts
         FROM siem.alerts_raw
         ORDER BY ts_last DESC
         LIMIT {int(limit)}
@@ -366,6 +405,8 @@ def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
                 'context_json': row['context_json'],
                 'source': row['source'],
                 'status': str(row['status']).lower(),
+                'assignee': row.get('assignee', ''),
+                'updated_ts': _fmt(row.get('updated_ts')),
             }
         )
     return rows
@@ -486,6 +527,7 @@ def fetch_dashboard_metrics() -> Dict[str, Any]:
 
 
 def fetch_alert_metrics() -> Dict[str, Any]:
+    ensure_incident_workflow_support()
     return {
         'agg_total': int(_scalar("SELECT count() FROM siem.alerts_agg")),
         'agg_open': int(_scalar("SELECT count() FROM siem.alerts_agg WHERE lower(status) != 'closed'")),
@@ -531,6 +573,8 @@ def fetch_assets(limit: int = 50, hours: int = 24) -> List[Dict[str, Any]]:
 
 def fetch_resource_overview() -> Dict[str, Any]:
     ensure_detection_support_tables()
+    ensure_incident_workflow_support()
+    ensure_active_list_support()
     return {
         'clickhouse_ok': ch_ping(),
         'events_total': int(_scalar("SELECT count() FROM siem.events")),
@@ -540,8 +584,122 @@ def fetch_resource_overview() -> Dict[str, Any]:
         'filter_rules': int(_scalar("SELECT count() FROM siem.filter_rules WHERE enabled = 1")),
         'stream_rules': int(_scalar("SELECT count() FROM siem.correlation_rules_stream WHERE enabled = 1")),
         'detection_rules': int(_scalar(f"SELECT count() FROM {DETECTION_RULE_TABLE}")),
+        'active_list_items': int(_scalar(f"SELECT count() FROM {ACTIVE_LIST_TABLE}")),
         'last_event_ts': _fmt(_scalar("SELECT max(ts) FROM siem.events")),
     }
+
+
+def ensure_incident_workflow_support() -> None:
+    for table in ("siem.alerts_raw", "siem.alerts_agg"):
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS assignee String DEFAULT ''")
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS updated_ts DateTime DEFAULT now()")
+
+
+def ensure_active_list_support() -> None:
+    get_ch_client().command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {ACTIVE_LIST_TABLE}
+        (
+            list_name LowCardinality(String),
+            value String,
+            value_type LowCardinality(String),
+            label String,
+            tags String,
+            enabled UInt8,
+            updated_ts DateTime DEFAULT now()
+        )
+        ENGINE = MergeTree
+        ORDER BY (list_name, value)
+        """
+    )
+
+
+def fetch_active_list_items(limit: int = 200) -> List[Dict[str, Any]]:
+    ensure_active_list_support()
+    query = f"""
+        SELECT
+            list_name,
+            value_type,
+            value,
+            label,
+            tags,
+            enabled,
+            updated_ts
+        FROM {ACTIVE_LIST_TABLE}
+        ORDER BY updated_ts DESC, list_name, value
+        LIMIT {int(limit)}
+    """
+    return [
+        {
+            "list_name": row["list_name"],
+            "item_type": row["value_type"],
+            "item_value": row["value"],
+            "item_label": row["label"],
+            "tags": [part for part in str(row["tags"] or "").split(",") if part],
+            "enabled": bool(row["enabled"]),
+            "updated_ts": _fmt(row["updated_ts"]),
+        }
+        for row in get_ch_client().query(query).named_results()
+    ]
+
+
+def save_active_list_item(
+    *,
+    list_name: str,
+    item_type: str,
+    item_value: str,
+    item_label: str = "",
+    tags: str = "",
+) -> Dict[str, Any]:
+    ensure_active_list_support()
+    safe_list_name = (list_name or "").strip()
+    safe_item_type = (item_type or "").strip().lower()
+    safe_item_value = (item_value or "").strip()
+    safe_item_label = (item_label or "").strip()
+    safe_tags = ",".join(part.strip() for part in str(tags or "").split(",") if part.strip())
+    if not safe_list_name or not safe_item_type or not safe_item_value:
+        raise ValueError("Active list name, item type and item value are required")
+    get_ch_client().command(
+        f"""
+        ALTER TABLE {ACTIVE_LIST_TABLE}
+        DELETE WHERE
+            list_name = {_sql_quote(safe_list_name)}
+            AND value_type = {_sql_quote(safe_item_type)}
+            AND value = {_sql_quote(safe_item_value)}
+        """
+    )
+    get_ch_client().insert(
+        ACTIVE_LIST_TABLE,
+        [[safe_list_name, safe_item_value, safe_item_type, safe_item_label, safe_tags, 1]],
+        column_names=["list_name", "value", "value_type", "label", "tags", "enabled"],
+    )
+    return {
+        "list_name": safe_list_name,
+        "item_type": safe_item_type,
+        "item_value": safe_item_value,
+        "item_label": safe_item_label,
+        "tags": safe_tags,
+    }
+
+
+def update_alert_assignment(view: str, record_id: str, *, status: str, assignee: str) -> Dict[str, Any]:
+    ensure_incident_workflow_support()
+    target = "siem.alerts_raw" if view == "raw" else "siem.alerts_agg"
+    id_column = "alert_id" if view == "raw" else "agg_id"
+    safe_status = _sql_quote((status or "new").strip().lower())
+    safe_assignee = _sql_quote((assignee or "").strip())
+    safe_id = _sql_quote(record_id)
+    get_ch_client().command(
+        f"""
+        ALTER TABLE {target}
+        UPDATE
+            status = {safe_status},
+            assignee = {safe_assignee},
+            updated_ts = now()
+        WHERE toString({id_column}) = {safe_id}
+        """
+    )
+    return {"view": view, "record_id": record_id, "status": status, "assignee": assignee}
 
 
 DEFAULT_SIGMA_RULES = [
@@ -758,6 +916,206 @@ tags:
   - attack.t1548
 """.strip(),
     },
+    {
+        "id": 1009,
+        "title": "Linux Authorized Keys Modified",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Authorized Keys Modified
+id: sigma-linux-authorized-keys-modified
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_authorized_keys_modified
+  condition: selection
+level: high
+tags:
+  - attack.persistence
+  - attack.t1098
+""".strip(),
+    },
+    {
+        "id": 1010,
+        "title": "Linux Cron Modified",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Cron Modified
+id: sigma-linux-cron-modified
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_cron_modified
+  condition: selection
+level: high
+tags:
+  - attack.persistence
+  - attack.t1053.003
+""".strip(),
+    },
+    {
+        "id": 1011,
+        "title": "Linux Passwd Or Shadow Access",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Passwd Or Shadow Access
+id: sigma-linux-passwd-shadow-access
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_passwd_shadow_access
+  condition: selection
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1003
+""".strip(),
+    },
+    {
+        "id": 1012,
+        "title": "Linux User Added To Admin Group",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "user.target.name",
+        "yaml": """
+title: Linux User Added To Admin Group
+id: sigma-linux-user-added-to-admin-group
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_user_added_to_admin_group
+  condition: selection
+level: high
+tags:
+  - attack.privilege_escalation
+  - attack.t1098
+""".strip(),
+    },
+    {
+        "id": 1013,
+        "title": "Linux Execution From Tmp",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Execution From Tmp
+id: sigma-linux-exec-from-tmp
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_exec_from_tmp
+  condition: selection
+level: high
+tags:
+  - attack.execution
+  - attack.t1059
+""".strip(),
+    },
+    {
+        "id": 1014,
+        "title": "Linux Reverse Shell Possible",
+        "level": "critical",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Reverse Shell Possible
+id: sigma-linux-reverse-shell-possible
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_reverse_shell_possible
+  condition: selection
+level: critical
+tags:
+  - attack.command_and_control
+  - attack.t1059
+""".strip(),
+    },
+    {
+        "id": 1015,
+        "title": "Linux Firewall Disabled",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Firewall Disabled
+id: sigma-linux-firewall-disabled
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_firewall_disabled
+  condition: selection
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1562
+""".strip(),
+    },
+    {
+        "id": 1016,
+        "title": "Linux Audit Rules Cleared",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Audit Rules Cleared
+id: sigma-linux-audit-rules-cleared
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_audit_rules_cleared
+  condition: selection
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1562
+""".strip(),
+    },
 ]
 
 
@@ -807,6 +1165,8 @@ def _map_sigma_field(field_name: str, *, target: str = "stream") -> tuple[str, s
             "event.provider": ("device_product", "eq"),
             "event.category": ("category", "eq"),
             "event.type": ("subcategory", "eq"),
+            "event.action": ("event_action", "eq"),
+            "event.outcome": ("event_outcome", "eq"),
             "logsource": ("log_source", "eq"),
             "log_source": ("log_source", "eq"),
             "severity": ("severity", "eq"),
@@ -815,18 +1175,19 @@ def _map_sigma_field(field_name: str, *, target: str = "stream") -> tuple[str, s
             "clientaddress": ("src_ip", "eq"),
             "ipaddress": ("src_ip", "eq"),
             "host": ("log_source", "eq"),
-            "host.name": ("log_source", "eq"),
-            "user": ("message", "contains"),
-            "username": ("message", "contains"),
-            "accountname": ("message", "contains"),
-            "user.name": ("message", "contains"),
-            "targetuser": ("message", "contains"),
-            "targetusername": ("message", "contains"),
-            "user.target.name": ("message", "contains"),
-            "commandline": ("message", "contains"),
-            "process.command_line": ("message", "contains"),
-            "image": ("message", "contains"),
-            "process.executable": ("message", "contains"),
+            "host.name": ("host_name", "eq"),
+            "user": ("user_name", "contains"),
+            "username": ("user_name", "contains"),
+            "accountname": ("user_name", "contains"),
+            "user.name": ("user_name", "contains"),
+            "targetuser": ("target_user", "contains"),
+            "targetusername": ("target_user", "contains"),
+            "user.target.name": ("target_user", "contains"),
+            "commandline": ("process_command", "contains"),
+            "process.command_line": ("process_command", "contains"),
+            "image": ("process_executable", "contains"),
+            "process.executable": ("process_executable", "contains"),
+            "process.name": ("process_name", "contains"),
         }
         normalized, default_modifier = field_map.get(field_key, ("message", "contains"))
         effective_modifier = modifier if modifier != "eq" else default_modifier
@@ -1272,6 +1633,7 @@ def test_detection_rule(rule_id: int) -> Dict[str, Any]:
 
 def fetch_asset_categories() -> List[Dict[str, Any]]:
     ensure_detection_support_tables()
+    ensure_active_list_support()
     return [
         {
             "name": "Devices",
@@ -1295,8 +1657,8 @@ def fetch_asset_categories() -> List[Dict[str, Any]]:
         },
         {
             "name": "Active Lists",
-            "count": 0,
-            "description": "Reserved category for stateful lists, allow/deny inventories and watchlists.",
+            "count": int(_scalar(f"SELECT count() FROM {ACTIVE_LIST_TABLE}")),
+            "description": "Stateful watchlists for enrichment, allow/deny inventory and entity lookups.",
         },
         {
             "name": "Threat Feeds",

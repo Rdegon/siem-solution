@@ -8,6 +8,7 @@ from .auth import get_current_user
 from ..deps import (
     fetch_alert_severity_breakdown,
     fetch_alert_status_breakdown,
+    fetch_active_list_items,
     fetch_asset_categories,
     fetch_assets,
     fetch_dashboard_metrics,
@@ -16,6 +17,7 @@ from ..deps import (
     fetch_recent_alerts,
     fetch_resource_overview,
     fetch_severity_breakdown,
+    save_active_list_item,
     save_sigma_rule,
     test_detection_rule,
     fetch_top_categories,
@@ -62,11 +64,13 @@ def _render_assets_page(
     assets = []
     asset_categories = []
     detection_rules = []
+    active_list_items = []
     load_error = error
     try:
         assets = fetch_assets(limit=50, hours=24)
         asset_categories = fetch_asset_categories()
         detection_rules = fetch_detection_rules(limit=200)
+        active_list_items = fetch_active_list_items(limit=200)
     except Exception as exc:  # noqa: BLE001
         load_error = load_error or f'Unable to load assets and detection catalog: {exc!s}'
     draft = {
@@ -86,6 +90,7 @@ def _render_assets_page(
             'assets': assets,
             'asset_categories': asset_categories,
             'detection_rules': detection_rules,
+            'active_list_items': active_list_items,
             'entity_fields': RULE_ENTITY_FIELDS,
             'rule_form': draft,
             'error': load_error,
@@ -173,6 +178,33 @@ async def create_sigma_rule(
     return RedirectResponse(
         url=f"/assets?created_rule_id={int(rule['id'])}",
         status_code=303,
+    )
+
+
+@router.post('/assets/active-lists', response_class=HTMLResponse)
+async def create_active_list_item(
+    request: Request,
+    list_name: str = Form(...),
+    item_type: str = Form(...),
+    item_value: str = Form(...),
+    item_label: str = Form(''),
+    tags: str = Form(''),
+    user=Depends(get_current_user),
+) -> HTMLResponse:
+    try:
+        item = save_active_list_item(
+            list_name=list_name,
+            item_type=item_type,
+            item_value=item_value,
+            item_label=item_label,
+            tags=tags,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _render_assets_page(request, user, error=f'Unable to save active list item: {exc!s}')
+    return _render_assets_page(
+        request,
+        user,
+        status=f"Active list item saved: {item['list_name']} / {item['item_value']}",
     )
 
 

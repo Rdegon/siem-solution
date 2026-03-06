@@ -80,6 +80,93 @@
         </section>
     </div>
 
+    <div class="grid-2">
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h3 class="panel-title">Active lists</h3>
+                    <p class="panel-subtitle">Lightweight enrichment watchlists for IPs, users, hosts, processes and raw text indicators. Matching events receive watchlist tags during ingest.</p>
+                </div>
+                <span class="badge live">Enrichment</span>
+            </div>
+            <div class="panel-body">
+                <form method="post" action="/assets/active-lists" class="view-stack">
+                    <div class="grid-2">
+                        <div>
+                            <label class="hint" for="listName">List name</label>
+                            <input id="listName" name="list_name" class="field" placeholder="vip_admins">
+                        </div>
+                        <div>
+                            <label class="hint" for="itemType">Item type</label>
+                            <select id="itemType" name="item_type" class="select">
+                                <option value="ip">ip</option>
+                                <option value="user">user</option>
+                                <option value="host">host</option>
+                                <option value="process">process</option>
+                                <option value="raw">raw</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid-3">
+                        <div>
+                            <label class="hint" for="itemValue">Item value</label>
+                            <input id="itemValue" name="item_value" class="field" placeholder="192.168.1.39">
+                        </div>
+                        <div>
+                            <label class="hint" for="itemLabel">Label</label>
+                            <input id="itemLabel" name="item_label" class="field" placeholder="Web node">
+                        </div>
+                        <div>
+                            <label class="hint" for="itemTags">Tags</label>
+                            <input id="itemTags" name="tags" class="field" placeholder="vip,critical-asset">
+                        </div>
+                    </div>
+                    <div class="chip-row">
+                        <button type="submit" class="btn primary">Save active list item</button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h3 class="panel-title">Current watchlist items</h3>
+                    <p class="panel-subtitle">This inventory feeds enrichment and will later be reused for allow/deny detection logic.</p>
+                </div>
+            </div>
+            <div class="panel-body table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>List</th>
+                            <th>Type</th>
+                            <th>Value</th>
+                            <th>Label</th>
+                            <th>Tags</th>
+                            <th>Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in active_list_items %}
+                        <tr>
+                            <td class="table-code">{{ item.list_name }}</td>
+                            <td>{{ item.item_type }}</td>
+                            <td class="table-code">{{ item.item_value }}</td>
+                            <td>{{ item.item_label or 'n/a' }}</td>
+                            <td>{{ item.tags | join(', ') if item.tags else 'n/a' }}</td>
+                            <td data-ts="{{ item.updated_ts }}">{{ item.updated_ts }}</td>
+                        </tr>
+                        {% endfor %}
+                        {% if not active_list_items %}
+                        <tr><td colspan="6"><div class="empty-box">No active list items saved yet.</div></td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
     <section class="panel">
         <div class="panel-header">
             <div>

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shlex
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -38,6 +39,15 @@ SUDO_SESSION_RE = re.compile(
     r"pam_unix\(sudo:session\): session (?P<state>opened|closed) for user (?P<target>\S+)",
     re.IGNORECASE,
 )
+SU_SESSION_RE = re.compile(
+    r"pam_unix\(su:session\): session (?P<state>opened|closed) for user (?P<target>\S+) by (?P<user>\S+)",
+    re.IGNORECASE,
+)
+CRON_CMD_RE = re.compile(r"\((?P<user>[^)]+)\)\s+CMD\s+\((?P<command>.+)\)")
+PASSWD_CHANGE_RE = re.compile(r"password changed for (?P<user>\S+)", re.IGNORECASE)
+USERADD_RE = re.compile(r"new user:\s+name=(?P<user>[^,\s]+)", re.IGNORECASE)
+USERDEL_RE = re.compile(r"delete user\s+'(?P<user>[^']+)'", re.IGNORECASE)
+USERMOD_RE = re.compile(r"(?:add|adding)\s+'?(?P<user>[^'\s]+)'?\s+to\s+(?:group|groups?)\s+'?(?P<group>[^'\s]+)'?", re.IGNORECASE)
 SYSLOG_LEVEL_MAP = {
     0: "critical",
     1: "critical",
@@ -47,6 +57,31 @@ SYSLOG_LEVEL_MAP = {
     5: "low",
     6: "info",
     7: "low",
+}
+HIGH_RISK_EVENT_TYPES = {
+    "audit_exec_as_root",
+    "linux_root_ssh_login",
+    "linux_reverse_shell_possible",
+    "linux_authorized_keys_modified",
+    "linux_ld_preload_modified",
+    "linux_firewall_disabled",
+}
+MEDIUM_RISK_EVENT_TYPES = {
+    "audit_user_login_failure",
+    "audit_user_auth_failure",
+    "linux_user_created",
+    "linux_user_deleted",
+    "linux_user_added_to_admin_group",
+    "linux_password_changed",
+    "linux_cron_modified",
+    "linux_audit_config_changed",
+    "linux_audit_rules_cleared",
+    "linux_download_utility",
+    "linux_network_tool",
+    "linux_packet_capture",
+    "linux_exec_from_tmp",
+    "linux_system_recon",
+    "linux_passwd_shadow_access",
 }
 
 
@@ -116,11 +151,122 @@ def _derive_severity(program: str, event_type: str, outcome: str, default_level:
         return "medium"
     if program == "sudo" and event_type == "sudo_command":
         return "medium"
-    if event_type == "audit_exec_as_root":
+    if event_type in HIGH_RISK_EVENT_TYPES:
         return "high"
-    if event_type in {"audit_user_login_failure", "audit_user_auth_failure"}:
+    if event_type in MEDIUM_RISK_EVENT_TYPES:
         return "medium"
     return default_level or "info"
+
+
+def _basename(value: str) -> str:
+    raw = _clean_value(value).replace("\\", "/")
+    return raw.rsplit("/", 1)[-1].lower()
+
+
+def _extract_execve_command(values: Dict[str, str], fallback: str) -> str:
+    args: List[str] = []
+    for key in sorted((item for item in values if re.fullmatch(r"a\d+", item)), key=lambda item: int(item[1:])):
+        candidate = _decode_hex(values.get(key, ""))
+        if candidate:
+            args.append(candidate)
+    if args:
+        return " ".join(args).strip()
+    return _decode_hex(values.get("cmd", "")) or _decode_hex(values.get("proctitle", "")) or fallback
+
+
+def _extract_target_user(command_line: str) -> str:
+    try:
+        tokens = shlex.split(command_line)
+    except Exception:
+        tokens = command_line.split()
+    for token in reversed(tokens):
+        if token.startswith("-"):
+            continue
+        return token.strip("'\"")
+    return ""
+
+
+def _set_event_shape(result: Dict[str, Any], *, category: str, action: str, event_type: str) -> None:
+    result["event.category"] = category
+    result["event.action"] = action
+    result["event.type"] = event_type
+
+
+def _classify_file_path_event(result: Dict[str, Any], path_value: str) -> None:
+    path_lower = _clean_value(path_value).lower()
+    if not path_lower:
+        return
+    if path_lower.endswith(".ssh/authorized_keys"):
+        _set_event_shape(result, category="persistence", action="file_modify", event_type="linux_authorized_keys_modified")
+    elif path_lower in {"/etc/passwd", "/etc/shadow"}:
+        _set_event_shape(result, category="credential", action="file_modify", event_type="linux_passwd_shadow_access")
+    elif path_lower.startswith("/etc/cron") or path_lower.endswith("/crontab"):
+        _set_event_shape(result, category="persistence", action="scheduled_task_modify", event_type="linux_cron_modified")
+    elif path_lower == "/etc/ld.so.preload":
+        _set_event_shape(result, category="defense_evasion", action="preload_modify", event_type="linux_ld_preload_modified")
+
+
+def _classify_execve_activity(result: Dict[str, Any]) -> None:
+    command_line = _clean_value(result.get("process.command_line", ""))
+    command_lower = command_line.lower()
+    executable = _basename(result.get("process.executable", "") or result.get("process.name", ""))
+    target_user = _extract_target_user(command_line)
+    if target_user and not result.get("user.target.name"):
+        result["user.target.name"] = target_user
+
+    if executable in {"useradd", "adduser"}:
+        _set_event_shape(result, category="identity", action="account_create", event_type="linux_user_created")
+    elif executable in {"userdel", "deluser"}:
+        _set_event_shape(result, category="identity", action="account_delete", event_type="linux_user_deleted")
+    elif executable == "usermod":
+        if any(group in command_lower for group in (" sudo", " wheel", "-g sudo", "-g wheel", "-ag sudo", "-ag wheel")):
+            _set_event_shape(result, category="privilege", action="group_modify", event_type="linux_user_added_to_admin_group")
+        else:
+            _set_event_shape(result, category="identity", action="account_modify", event_type="linux_user_modified")
+    elif executable == "passwd":
+        _set_event_shape(result, category="credential", action="password_change", event_type="linux_password_changed")
+    elif executable in {"crontab", "at"} or "/etc/cron" in command_lower:
+        _set_event_shape(result, category="persistence", action="scheduled_task_modify", event_type="linux_cron_modified")
+    elif executable == "systemctl":
+        if " enable " in f" {command_lower} ":
+            _set_event_shape(result, category="persistence", action="service_enable", event_type="linux_systemd_service_enabled")
+        elif " disable " in f" {command_lower} ":
+            _set_event_shape(result, category="defense_evasion", action="service_disable", event_type="linux_systemd_service_disabled")
+        elif " start " in f" {command_lower} " or " restart " in f" {command_lower} ":
+            _set_event_shape(result, category="execution", action="service_start", event_type="linux_systemd_service_started")
+        elif " stop " in f" {command_lower} ":
+            _set_event_shape(result, category="impact", action="service_stop", event_type="linux_systemd_service_stopped")
+    elif executable in {"auditctl", "augenrules"} or "audit.rules" in command_lower:
+        if " -d" in command_lower or " -D" in command_line:
+            _set_event_shape(result, category="defense_evasion", action="audit_rules_clear", event_type="linux_audit_rules_cleared")
+        else:
+            _set_event_shape(result, category="defense_evasion", action="audit_config_change", event_type="linux_audit_config_changed")
+    elif executable in {"iptables", "ufw", "firewall-cmd"} or "firewalld" in command_lower:
+        if any(token in command_lower for token in ("disable", "stop", "flush", " -f")):
+            _set_event_shape(result, category="defense_evasion", action="firewall_disable", event_type="linux_firewall_disabled")
+        else:
+            _set_event_shape(result, category="defense_evasion", action="firewall_modify", event_type="linux_firewall_modified")
+    elif executable in {"tar", "zip", "gzip", "bzip2", "xz", "7z"}:
+        _set_event_shape(result, category="exfiltration", action="archive", event_type="linux_data_compressed")
+    elif executable in {"curl", "wget"}:
+        _set_event_shape(result, category="command_and_control", action="download", event_type="linux_download_utility")
+    elif executable in {"nc", "ncat", "socat"}:
+        _set_event_shape(result, category="command_and_control", action="network_tool", event_type="linux_network_tool")
+    elif executable in {"tcpdump", "tshark"}:
+        _set_event_shape(result, category="discovery", action="sniff", event_type="linux_packet_capture")
+
+    if any(token in command_lower for token in ("bash -i", "/dev/tcp/", "nc -e", "ncat -e", "mkfifo ", "socat exec", "python -c", "perl -e", "php -r")):
+        _set_event_shape(result, category="command_and_control", action="reverse_shell", event_type="linux_reverse_shell_possible")
+    elif any(token in command_lower for token in ("whoami", "uname", "hostnamectl", "ip a", "ifconfig", "netstat", "ss -", "lsof -i", "cat /etc/passwd", "getent passwd", "last ", "w ", "who ")):
+        _set_event_shape(result, category="discovery", action="recon", event_type="linux_system_recon")
+    elif "/tmp/" in command_lower:
+        _set_event_shape(result, category="execution", action="exec_tmp", event_type="linux_exec_from_tmp")
+    elif "authorized_keys" in command_lower:
+        _set_event_shape(result, category="persistence", action="authorized_keys_modify", event_type="linux_authorized_keys_modified")
+    elif any(token in command_lower for token in ("/etc/passwd", "/etc/shadow")):
+        _set_event_shape(result, category="credential", action="credential_file_access", event_type="linux_passwd_shadow_access")
+    elif "ld.so.preload" in command_lower:
+        _set_event_shape(result, category="defense_evasion", action="preload_modify", event_type="linux_ld_preload_modified")
 
 
 def _parse_auditd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
@@ -137,6 +283,9 @@ def _parse_auditd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
     command_hex = values.get("cmd", "")
     proctitle_hex = values.get("proctitle", "")
     audit_key = values.get("key", "")
+    file_path = values.get("name", "")
+    cwd = values.get("cwd", "")
+    command_line = _extract_execve_command(values, _decode_hex(command_hex) or _decode_hex(proctitle_hex))
 
     event_category = "audit"
     event_action = "audit"
@@ -175,14 +324,27 @@ def _parse_auditd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
         "audit.type": event_type_raw,
         "audit.id": values.get("msg", ""),
         "audit.key": audit_key,
+        "session.id": values.get("ses", ""),
         "user.name": acct,
+        "user.id": values.get("uid", ""),
         "user.audit.name": values.get("AUID", "") or values.get("auid", ""),
+        "user.target.name": "",
         "source.ip": addr if _is_ipv4(addr) else "",
+        "source.port": values.get("src", ""),
         "process.executable": exe,
         "process.name": values.get("comm", "") or base.get("process.name", ""),
-        "process.command_line": _decode_hex(command_hex) or _decode_hex(proctitle_hex),
+        "process.command_line": command_line,
+        "process.working_directory": cwd,
+        "process.tty": values.get("terminal", "") or values.get("tty", ""),
+        "file.path": file_path,
+        "file.mode": values.get("mode", ""),
+        "file.type": values.get("nametype", ""),
         "host.name": values.get("hostname", "") or base.get("host.name", ""),
     }
+    if event_type_raw == "PATH":
+        _classify_file_path_event(result, file_path)
+    if event_type_raw in {"EXECVE", "SYSCALL", "PROCTITLE"}:
+        _classify_execve_activity(result)
     result["event.severity"] = _derive_severity("auditd", result["event.type"], outcome, str(base.get("log.level", "info")))
     return result
 
@@ -194,9 +356,9 @@ def _parse_sshd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
             "event.provider": "linux.sshd",
             "event.category": "authentication",
             "event.action": "authentication_success",
-            "event.type": "ssh_login_success",
+            "event.type": "linux_root_ssh_login" if accepted.group("user") == "root" else "ssh_login_success",
             "event.outcome": "success",
-            "event.severity": "info",
+            "event.severity": "high" if accepted.group("user") == "root" else "info",
             "user.name": accepted.group("user"),
             "source.ip": accepted.group("ip"),
             "source.port": accepted.group("port"),
@@ -282,6 +444,111 @@ def _parse_sudo(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _parse_su(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
+    session = SU_SESSION_RE.search(body)
+    if session:
+        state = session.group("state").lower()
+        return {
+            "event.provider": "linux.su",
+            "event.category": "privilege",
+            "event.action": f"session_{state}",
+            "event.type": f"linux_su_session_{state}",
+            "event.outcome": "success",
+            "event.severity": "medium",
+            "user.name": session.group("user"),
+            "user.target.name": session.group("target"),
+        }
+    return {
+        "event.provider": "linux.su",
+        "event.category": "privilege",
+        "event.action": "observe",
+        "event.type": "linux_su_event",
+        "event.severity": str(base.get("log.level", "info") or "info"),
+    }
+
+
+def _parse_cron(program: str, body: str, base: Dict[str, Any]) -> Dict[str, Any]:
+    command = CRON_CMD_RE.search(body)
+    if command:
+        return {
+            "event.provider": f"linux.{program}",
+            "event.category": "persistence",
+            "event.action": "scheduled_task_execute",
+            "event.type": "linux_cron_command",
+            "event.outcome": "success",
+            "event.severity": "low",
+            "user.name": command.group("user").strip(),
+            "process.command_line": command.group("command").strip(),
+        }
+    return {
+        "event.provider": f"linux.{program}",
+        "event.category": "persistence",
+        "event.action": "observe",
+        "event.type": "linux_cron_event",
+        "event.severity": str(base.get("log.level", "info") or "info"),
+    }
+
+
+def _parse_account_tools(program: str, body: str, base: Dict[str, Any]) -> Dict[str, Any]:
+    if program == "passwd":
+        change = PASSWD_CHANGE_RE.search(body)
+        return {
+            "event.provider": "linux.passwd",
+            "event.category": "credential",
+            "event.action": "password_change",
+            "event.type": "linux_password_changed",
+            "event.outcome": "success" if change else "unknown",
+            "event.severity": "medium",
+            "user.target.name": change.group("user") if change else "",
+        }
+
+    if program == "useradd":
+        created = USERADD_RE.search(body)
+        return {
+            "event.provider": "linux.useradd",
+            "event.category": "identity",
+            "event.action": "account_create",
+            "event.type": "linux_user_created",
+            "event.outcome": "success" if created else "unknown",
+            "event.severity": "medium",
+            "user.target.name": created.group("user") if created else "",
+        }
+
+    if program == "userdel":
+        deleted = USERDEL_RE.search(body)
+        return {
+            "event.provider": "linux.userdel",
+            "event.category": "identity",
+            "event.action": "account_delete",
+            "event.type": "linux_user_deleted",
+            "event.outcome": "success" if deleted else "unknown",
+            "event.severity": "medium",
+            "user.target.name": deleted.group("user") if deleted else "",
+        }
+
+    if program == "usermod":
+        modified = USERMOD_RE.search(body)
+        event_type = "linux_user_added_to_admin_group" if modified and modified.group("group").lower() in {"sudo", "wheel"} else "linux_user_modified"
+        return {
+            "event.provider": "linux.usermod",
+            "event.category": "privilege" if event_type == "linux_user_added_to_admin_group" else "identity",
+            "event.action": "group_modify" if event_type == "linux_user_added_to_admin_group" else "account_modify",
+            "event.type": event_type,
+            "event.outcome": "success" if modified else "unknown",
+            "event.severity": "medium",
+            "user.target.name": modified.group("user") if modified else "",
+            "group.name": modified.group("group") if modified else "",
+        }
+
+    return {
+        "event.provider": f"linux.{program}",
+        "event.category": "identity",
+        "event.action": "observe",
+        "event.type": f"linux_{program}_event",
+        "event.severity": str(base.get("log.level", "info") or "info"),
+    }
+
+
 def _parse_linux_syslog(raw_event: Dict[str, Any]) -> Dict[str, Any]:
     message = _clean_value(raw_event.get("message"))
     source_ip = _clean_value(raw_event.get("source"))
@@ -324,6 +591,12 @@ def _parse_linux_syslog(raw_event: Dict[str, Any]) -> Dict[str, Any]:
         return _merge_non_empty(enriched, _parse_sshd(body, enriched))
     if program == "sudo":
         return _merge_non_empty(enriched, _parse_sudo(body, enriched))
+    if program == "su":
+        return _merge_non_empty(enriched, _parse_su(body, enriched))
+    if program in {"cron", "crond"}:
+        return _merge_non_empty(enriched, _parse_cron(program, body, enriched))
+    if program in {"passwd", "useradd", "userdel", "usermod"}:
+        return _merge_non_empty(enriched, _parse_account_tools(program, body, enriched))
 
     return enriched
 
