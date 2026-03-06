@@ -24,6 +24,11 @@ SYSLOG_RFC5424_RE = re.compile(
 )
 KV_RE = re.compile(r'([A-Za-z0-9_.-]+)=(".*?"|\'.*?\'|[^ ]+)')
 IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+UFW_BLOCK_RE = re.compile(
+    r"\[UFW BLOCK\].*?\bSRC=(?P<src>\d+\.\d+\.\d+\.\d+)\b.*?\bDST=(?P<dst>\d+\.\d+\.\d+\.\d+)\b"
+    r"(?:.*?\bPROTO=(?P<proto>[A-Z0-9]+))?(?:.*?\bSPT=(?P<spt>\d+))?(?:.*?\bDPT=(?P<dpt>\d+))?",
+    re.IGNORECASE,
+)
 SSHD_ACCEPT_RE = re.compile(
     r"Accepted (?P<method>\w+) for (?P<user>\S+) from (?P<ip>\d+\.\d+\.\d+\.\d+) port (?P<port>\d+)",
     re.IGNORECASE,
@@ -34,6 +39,10 @@ SSHD_FAIL_RE = re.compile(
 )
 SSHD_SESSION_RE = re.compile(
     r"pam_unix\(sshd:session\): session (?P<state>opened|closed) for user (?P<user>\S+)",
+    re.IGNORECASE,
+)
+SSHD_INVALID_USER_RE = re.compile(
+    r"Invalid user (?P<user>\S+) from (?P<ip>\d+\.\d+\.\d+\.\d+) port (?P<port>\d+)",
     re.IGNORECASE,
 )
 SUDO_COMMAND_RE = re.compile(
@@ -115,6 +124,17 @@ def _strip_quotes(value: str) -> str:
     return value
 
 
+def _canonical_host_name(value: str) -> str:
+    host = _clean_value(value)
+    if not host or _is_ipv4(host):
+        return host
+    if "." in host:
+        head = host.split(".", 1)[0].strip()
+        if head:
+            return head
+    return host
+
+
 def _decode_hex(value: str) -> str:
     raw = value.strip()
     if not raw or len(raw) % 2 != 0 or not re.fullmatch(r"[0-9A-Fa-f]+", raw):
@@ -157,6 +177,10 @@ def _derive_severity(program: str, event_type: str, outcome: str, default_level:
         return "medium"
     if program == "sudo" and event_type == "sudo_command":
         return "medium"
+    if event_type.startswith("audit_service_"):
+        return "low"
+    if event_type in {"audit_cred_acq_success", "audit_cred_disp_success", "audit_cred_refr_success", "audit_user_start_success", "audit_user_end_success"}:
+        return "info"
     if event_type in HIGH_RISK_EVENT_TYPES:
         return "high"
     if event_type in MEDIUM_RISK_EVENT_TYPES:
@@ -314,11 +338,19 @@ def _parse_auditd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
         event_action = "authentication" if event_type_raw != "USER_LOGIN" else "login"
         if outcome in {"success", "failure"}:
             event_type = f"audit_{event_type_raw.lower()}_{outcome}"
+    elif event_type_raw == "USER_ERR":
+        event_category = "authentication"
+        event_action = "authentication_failed"
+        event_type = "audit_user_err"
     elif event_type_raw in {"USER_START", "USER_END", "CRED_ACQ", "CRED_DISP", "CRED_REFR"}:
         event_category = "session"
         event_action = "session"
         if outcome in {"success", "failure"}:
             event_type = f"audit_{event_type_raw.lower()}_{outcome}"
+    elif event_type_raw in {"SERVICE_START", "SERVICE_STOP"}:
+        event_category = "service"
+        event_action = "service_start" if event_type_raw == "SERVICE_START" else "service_stop"
+        event_type = f"audit_{event_type_raw.lower()}"
     elif event_type_raw == "USER_CMD":
         event_category = "privilege"
         event_action = "command"
@@ -333,6 +365,9 @@ def _parse_auditd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
         else:
             event_type = f"audit_{event_type_raw.lower()}"
 
+    audit_hostname = values.get("hostname", "")
+    if _is_ipv4(audit_hostname) or audit_hostname in {"?", "-"}:
+        audit_hostname = ""
     result = {
         "event.provider": "linux.auditd",
         "event.category": event_category,
@@ -357,7 +392,7 @@ def _parse_auditd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
         "file.path": file_path,
         "file.mode": values.get("mode", ""),
         "file.type": values.get("nametype", ""),
-        "host.name": values.get("hostname", "") or base.get("host.name", ""),
+        "host.name": audit_hostname or base.get("host.name", ""),
     }
     if event_type_raw == "PATH":
         _classify_file_path_event(result, file_path)
@@ -382,6 +417,22 @@ def _parse_sshd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
             "source.port": accepted.group("port"),
             "network.transport": "tcp",
             "auth.method": accepted.group("method").lower(),
+        }
+
+    invalid_user = SSHD_INVALID_USER_RE.search(body)
+    if invalid_user:
+        return {
+            "event.provider": "linux.sshd",
+            "event.category": "authentication",
+            "event.action": "authentication_failed",
+            "event.type": "ssh_invalid_user",
+            "event.outcome": "failure",
+            "event.severity": "medium",
+            "user.name": invalid_user.group("user"),
+            "source.ip": invalid_user.group("ip"),
+            "source.port": invalid_user.group("port"),
+            "network.transport": "tcp",
+            "auth.method": "unknown",
         }
 
     failed = SSHD_FAIL_RE.search(body)
@@ -418,6 +469,31 @@ def _parse_sshd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
         "event.category": "authentication",
         "event.type": "ssh_event",
         "event.action": "observe",
+        "event.severity": str(base.get("log.level", "info") or "info"),
+    }
+
+
+def _parse_kernel(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
+    ufw = UFW_BLOCK_RE.search(body)
+    if ufw:
+        return {
+            "event.provider": "linux.kernel",
+            "event.category": "network",
+            "event.action": "firewall_block",
+            "event.type": "linux_firewall_blocked",
+            "event.outcome": "success",
+            "event.severity": "low",
+            "source.ip": ufw.group("src"),
+            "destination.ip": ufw.group("dst"),
+            "source.port": ufw.group("spt") or "",
+            "destination.port": ufw.group("dpt") or "",
+            "network.transport": (ufw.group("proto") or "").lower(),
+        }
+    return {
+        "event.provider": "linux.kernel",
+        "event.category": "system",
+        "event.action": "observe",
+        "event.type": "linux_kernel_event",
         "event.severity": str(base.get("log.level", "info") or "info"),
     }
 
@@ -592,7 +668,7 @@ def _parse_linux_syslog(raw_event: Dict[str, Any]) -> Dict[str, Any]:
         pri = int(match_rfc5424.group("pri") or 13)
         severity_code = pri % 8
         level = SYSLOG_LEVEL_MAP.get(severity_code, "info")
-        host_name = _clean_value(match_rfc5424.group("host"))
+        host_name = _canonical_host_name(match_rfc5424.group("host"))
         process_pid = _clean_value(match_rfc5424.group("pid"))
         if process_pid == "-":
             process_pid = ""
@@ -614,7 +690,7 @@ def _parse_linux_syslog(raw_event: Dict[str, Any]) -> Dict[str, Any]:
         pri = int(match.group("pri") or 13)
         severity_code = pri % 8
         level = SYSLOG_LEVEL_MAP.get(severity_code, "info")
-        host_name = _clean_value(match.group("host"))
+        host_name = _canonical_host_name(match.group("host"))
         _merge_non_empty(
             enriched,
             {
@@ -636,6 +712,8 @@ def _parse_linux_syslog(raw_event: Dict[str, Any]) -> Dict[str, Any]:
         return _merge_non_empty(enriched, _parse_sudo(body, enriched))
     if program == "su":
         return _merge_non_empty(enriched, _parse_su(body, enriched))
+    if program == "kernel":
+        return _merge_non_empty(enriched, _parse_kernel(body, enriched))
     if program in {"cron", "crond"}:
         return _merge_non_empty(enriched, _parse_cron(program, body, enriched))
     if program in {"passwd", "useradd", "userdel", "usermod"}:
@@ -750,11 +828,17 @@ def _build_uem(rule: Optional[NormalizerRule], raw_event: Dict[str, Any]) -> Dic
     if "event.original" not in uem or uem.get("event.original") in (None, ""):
         uem["event.original"] = raw_event.get("message", "") or str(raw_event)
     if "host.name" not in uem or uem.get("host.name") in (None, ""):
-        uem["host.name"] = raw_event.get("source", "") or raw_event.get("log_source", "") or ""
+        uem["host.name"] = _canonical_host_name(raw_event.get("source", "") or raw_event.get("log_source", "") or "")
+    else:
+        uem["host.name"] = _canonical_host_name(str(uem.get("host.name") or ""))
     if "log_source" not in uem or uem.get("log_source") in (None, ""):
-        uem["log_source"] = raw_event.get("host.name", "") or raw_event.get("source", "") or raw_event.get("log_source", "") or ""
+        uem["log_source"] = _canonical_host_name(
+            raw_event.get("host.name", "") or raw_event.get("source", "") or raw_event.get("log_source", "") or ""
+        )
     elif raw_event.get("host.name") and raw_event.get("log_source") == raw_event.get("source"):
-        uem["log_source"] = raw_event.get("host.name") or uem.get("log_source")
+        uem["log_source"] = _canonical_host_name(raw_event.get("host.name") or uem.get("log_source"))
+    else:
+        uem["log_source"] = _canonical_host_name(str(uem.get("log_source") or ""))
     return uem
 
 

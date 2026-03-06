@@ -89,7 +89,8 @@ function renderDashboardTimeline() {
     const tooltip = document.getElementById('dashboardTimelineTooltip');
     const svg = timelineContainer.querySelector('svg');
     const pointNodes = Array.from(timelineContainer.querySelectorAll('.timeline-point'));
-    const summaryText = `Total ${counts.reduce((sum, value) => sum + value, 0)} events, peak ${maxValue} per hour, latest bucket ${formatDisplayTimestamp(points[points.length - 1].bucket)}.`;
+    const latestPoint = points[points.length - 1];
+    const summaryText = `Total ${counts.reduce((sum, value) => sum + value, 0)} events, peak ${maxValue} per hour, latest bucket ${latestPoint ? latestPoint.count : 0}. Hover a point to inspect time and volume.`;
     function hideTooltip() {
         pointNodes.forEach((node) => node.classList.remove('is-active'));
         if (tooltip) tooltip.classList.remove('open');
@@ -101,13 +102,14 @@ function renderDashboardTimeline() {
         if (!point || !node || !tooltip || !svg) return;
         pointNodes.forEach((item) => item.classList.toggle('is-active', item === node));
         const rect = svg.getBoundingClientRect();
-        tooltip.style.left = `${(point.x / width) * rect.width + 12}px`;
-        tooltip.style.top = `${(point.y / height) * rect.height + 10}px`;
-        tooltip.innerHTML = `<strong>${point.count}</strong><div>${escapeHtml(formatDisplayTimestamp(point.bucket))}</div><div class="page-note">Events in this hour bucket</div>`;
+        tooltip.innerHTML = `<strong>${point.count} events</strong><div>${escapeHtml(formatDisplayTimestamp(point.bucket))}</div><div class="page-note">Hour bucket volume</div>`;
         tooltip.classList.add('open');
-        if (timelineMeta) {
-            timelineMeta.textContent = `${formatDisplayTimestamp(point.bucket)}: ${point.count} events. ${summaryText}`;
-        }
+        const rawLeft = (point.x / width) * rect.width + 12;
+        const top = Math.max(36, (point.y / height) * rect.height + 10);
+        const halfWidth = tooltip.offsetWidth / 2;
+        const clampedLeft = Math.max(halfWidth + 8, Math.min(rect.width - halfWidth - 8, rawLeft));
+        tooltip.style.left = `${clampedLeft}px`;
+        tooltip.style.top = `${top}px`;
     }
     pointNodes.forEach((node, index) => {
         node.addEventListener('mouseenter', () => showTooltip(index));

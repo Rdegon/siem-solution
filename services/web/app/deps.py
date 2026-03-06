@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import datetime
 from functools import lru_cache
+import json
 import re
 from time import perf_counter
 from typing import Any, Dict, List
@@ -155,6 +156,71 @@ def _fmt(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _fmt(item) for key, item in value.items()}
     return value
+
+
+def _json_loads_safe(value: Any) -> Any:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def _alert_effective_source(source: Any, context_json: Any) -> str:
+    safe_source = str(source or "").strip()
+    if safe_source and safe_source != "stream":
+        return safe_source
+    context = _json_loads_safe(context_json)
+    if isinstance(context, dict):
+        for key in ("source", "host_name"):
+            candidate = str(context.get(key) or "").strip()
+            if candidate:
+                return candidate
+    return safe_source or "unknown"
+
+
+def _alert_effective_source_sql(alias: str = "effective_source") -> str:
+    return f"if(source != '' AND source != 'stream', source, JSONExtractString(context_json, 'source')) AS {alias}"
+
+
+def _incident_key_sql(alias: str = "incident_key") -> str:
+    source_expr = "if(source != '' AND source != 'stream', source, JSONExtractString(context_json, 'source'))"
+    return f"if(entity_key != '', entity_key, {source_expr}) AS {alias}"
+
+
+def _incident_key_from_alert(row: Dict[str, Any]) -> str:
+    entity_key = str(row.get("entity_key") or "").strip()
+    if entity_key:
+        return entity_key
+    source = _alert_effective_source(row.get("source"), row.get("context_json"))
+    if source and source != "unknown":
+        return source
+    return f"rule:{row.get('rule_id', 'unknown')}"
+
+
+def _severity_rank(level: str) -> int:
+    order = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1, "unknown": 0}
+    return order.get(str(level or "").lower(), 0)
+
+
+def _incident_status_value(rows: List[Dict[str, Any]]) -> str:
+    statuses = {str(row.get("status") or "new").lower() for row in rows}
+    priority = ["in_progress", "assigned", "triaged", "reopened", "open", "new", "closed", "false_positive"]
+    for candidate in priority:
+        if candidate in statuses:
+            return candidate
+    return "new"
+
+
+def _incident_assignee_value(rows: List[Dict[str, Any]]) -> str:
+    ranked = sorted(rows, key=lambda row: str(row.get("updated_ts") or row.get("ts_last") or row.get("ts") or ""), reverse=True)
+    for row in ranked:
+        assignee = str(row.get("assignee") or "").strip()
+        if assignee:
+            return assignee
+    return ""
 
 
 def _scalar(query: str) -> Any:
@@ -376,49 +442,116 @@ def execute_event_query(
 
 def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
     ensure_incident_workflow_support()
-    query = f"""
+    query = """
         SELECT
             ts,
-            agg_id,
+            alert_id,
             rule_id,
             rule_name,
-            lower(severity_agg) AS severity_agg,
+            lower(severity) AS severity,
             ts_first,
             ts_last,
-            count_alerts,
-            unique_entities,
+            window_s,
             entity_key,
-            group_key_json,
-            samples_json,
+            hits,
+            context_json,
+            source,
             status,
             assignee,
             updated_ts
-        FROM siem.alerts_agg
+        FROM siem.alerts_raw
         ORDER BY ts_last DESC
-        LIMIT {int(limit)}
+        LIMIT 5000
     """
-    rows: List[Dict[str, Any]] = []
-    for row in get_ch_client().query(query).named_results():
-        rows.append(
-            {
-                'ts': _fmt(row['ts']),
-                'agg_id': str(row['agg_id']),
-                'rule_id': row['rule_id'],
-                'rule_name': row['rule_name'],
-                'severity_agg': str(row['severity_agg']).lower(),
-                'ts_first': _fmt(row['ts_first']),
-                'ts_last': _fmt(row['ts_last']),
-                'count_alerts': int(row['count_alerts']),
-                'unique_entities': int(row['unique_entities']),
-                'entity_key': row['entity_key'],
-                'group_key_json': row['group_key_json'],
-                'samples_json': row['samples_json'],
-                'status': str(row['status']).lower(),
-                'assignee': row.get('assignee', ''),
-                'updated_ts': _fmt(row.get('updated_ts')),
-            }
+    raw_rows = [
+        {
+            "ts": _fmt(row["ts"]),
+            "alert_id": str(row["alert_id"]),
+            "rule_id": int(row["rule_id"]),
+            "rule_name": str(row["rule_name"]),
+            "severity": str(row["severity"]).lower(),
+            "ts_first": _fmt(row["ts_first"]),
+            "ts_last": _fmt(row["ts_last"]),
+            "window_s": int(row["window_s"]),
+            "entity_key": str(row["entity_key"] or ""),
+            "hits": int(row["hits"]),
+            "context_json": row["context_json"],
+            "context": _json_loads_safe(row["context_json"]),
+            "source": _alert_effective_source(row["source"], row["context_json"]),
+            "status": str(row["status"]).lower(),
+            "assignee": str(row.get("assignee", "") or ""),
+            "updated_ts": _fmt(row.get("updated_ts")),
+        }
+        for row in get_ch_client().query(query).named_results()
+    ]
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for row in raw_rows:
+        grouped[_incident_key_from_alert(row)].append(row)
+
+    incidents: List[Dict[str, Any]] = []
+    for incident_key, items in grouped.items():
+        sorted_items = sorted(
+            items,
+            key=lambda row: (
+                str(row.get("ts_last") or ""),
+                _severity_rank(str(row.get("severity") or "")),
+                int(row.get("hits") or 0),
+            ),
+            reverse=True,
         )
-    return rows
+        latest = sorted_items[0]
+        rule_names = list(dict.fromkeys(str(row.get("rule_name") or "") for row in sorted_items if str(row.get("rule_name") or "").strip()))
+        sources = list(dict.fromkeys(str(row.get("source") or "") for row in sorted_items if str(row.get("source") or "").strip()))
+        samples = [row.get("context") or _json_loads_safe(row.get("context_json")) for row in sorted_items[:5]]
+        samples = [sample for sample in samples if sample]
+        severity_agg = max((str(row.get("severity") or "info").lower() for row in sorted_items), key=_severity_rank, default="info")
+        ts_first = min((str(row.get("ts_first") or "") for row in sorted_items), default="")
+        ts_last = max((str(row.get("ts_last") or "") for row in sorted_items), default="")
+        total_hits = sum(int(row.get("hits") or 0) for row in sorted_items)
+        entity_keys = list(dict.fromkeys(str(row.get("entity_key") or "") for row in sorted_items if str(row.get("entity_key") or "").strip()))
+        group_key = {
+            "incident_key": incident_key,
+            "entity_key": entity_keys[0] if entity_keys else incident_key,
+            "sources": sources,
+            "rule_names": rule_names,
+            "primary_rule": str(latest.get("rule_name") or ""),
+            "primary_rule_id": int(latest.get("rule_id") or 0),
+        }
+        incident = {
+            "ts": latest["ts"],
+            "agg_id": incident_key,
+            "rule_id": int(latest["rule_id"]),
+            "rule_name": str(latest["rule_name"]),
+            "severity_agg": severity_agg,
+            "ts_first": ts_first,
+            "ts_last": ts_last,
+            "count_alerts": len(sorted_items),
+            "unique_entities": max(1, len(entity_keys)),
+            "entity_key": entity_keys[0] if entity_keys else incident_key,
+            "group_key_json": json.dumps(group_key, ensure_ascii=False),
+            "samples_json": json.dumps(samples, ensure_ascii=False),
+            "group_key": group_key,
+            "samples": samples,
+            "status": _incident_status_value(sorted_items),
+            "assignee": _incident_assignee_value(sorted_items),
+            "updated_ts": max((str(row.get("updated_ts") or row.get("ts_last") or "") for row in sorted_items), default=""),
+            "sources": sources,
+            "source_summary": ", ".join(sources[:4]),
+            "raw_alerts_total": len(sorted_items),
+            "raw_hits_total": total_hits,
+            "cluster": {
+                "sources": sources,
+                "rule_names": rule_names,
+                "raw_alerts": len(sorted_items),
+                "total_hits": total_hits,
+                "cluster_first": ts_first,
+                "cluster_last": ts_last,
+            },
+        }
+        incidents.append(incident)
+
+    incidents.sort(key=lambda row: str(row.get("ts_last") or ""), reverse=True)
+    return incidents[: int(limit)]
 
 
 def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
@@ -459,12 +592,43 @@ def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
                 'entity_key': row['entity_key'],
                 'hits': int(row['hits']),
                 'context_json': row['context_json'],
-                'source': row['source'],
+                'context': _json_loads_safe(row['context_json']),
+                'source': _alert_effective_source(row['source'], row['context_json']),
                 'status': str(row['status']).lower(),
                 'assignee': row.get('assignee', ''),
                 'updated_ts': _fmt(row.get('updated_ts')),
             }
         )
+    if not rows:
+        return rows
+    cluster_rows = get_ch_client().query(
+        """
+        SELECT
+            entity_key,
+            groupUniqArray(8)(if(source != 'stream', source, JSONExtractString(context_json, 'source'))) AS sources,
+            groupUniqArray(8)(rule_name) AS rule_names,
+            count() AS raw_alerts,
+            sum(hits) AS total_hits,
+            min(ts_first) AS cluster_first,
+            max(ts_last) AS cluster_last
+        FROM siem.alerts_raw
+        WHERE entity_key != ''
+        GROUP BY entity_key
+        """
+    ).named_results()
+    cluster_index = {
+        str(row["entity_key"]): {
+            "sources": [str(item) for item in row["sources"] if str(item or "").strip()],
+            "rule_names": [str(item) for item in row["rule_names"] if str(item or "").strip()],
+            "raw_alerts": int(row["raw_alerts"]),
+            "total_hits": int(row["total_hits"]),
+            "cluster_first": _fmt(row["cluster_first"]),
+            "cluster_last": _fmt(row["cluster_last"]),
+        }
+        for row in cluster_rows
+    }
+    for row in rows:
+        row["cluster"] = cluster_index.get(str(row["entity_key"] or ""), {})
     return rows
 
 
@@ -567,10 +731,21 @@ def fetch_top_categories(limit: int = 8, hours: int = 24) -> List[Dict[str, Any]
 
 
 def fetch_dashboard_metrics() -> Dict[str, Any]:
+    open_incidents_24h_query = f"""
+        SELECT count()
+        FROM (
+            SELECT {_incident_key_sql('incident_key')}
+            FROM siem.alerts_raw
+            WHERE ts >= now() - INTERVAL 24 HOUR
+            GROUP BY incident_key
+            HAVING incident_key != ''
+               AND countIf(lower(status) NOT IN ('closed', 'false_positive')) > 0
+        )
+    """
     return {
         'events_24h': int(_scalar("SELECT count() FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR")),
         'events_1h': int(_scalar("SELECT count() FROM siem.events WHERE ts >= now() - INTERVAL 1 HOUR")),
-        'open_incidents_24h': int(_scalar("SELECT count() FROM siem.alerts_agg WHERE ts >= now() - INTERVAL 24 HOUR AND lower(status) != 'closed'")),
+        'open_incidents_24h': int(_scalar(open_incidents_24h_query)),
         'new_alerts_24h': int(_scalar("SELECT count() FROM siem.alerts_raw WHERE ts >= now() - INTERVAL 24 HOUR AND lower(status) = 'new'")),
         'critical_events_24h': int(_scalar("SELECT count() FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR AND lower(severity) = 'critical'")),
         'active_sources_24h': int(_scalar(f"SELECT countDistinct(if(host_name != '' AND host_name != '-', host_name, log_source)) FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR")),
@@ -580,9 +755,28 @@ def fetch_dashboard_metrics() -> Dict[str, Any]:
 
 def fetch_alert_metrics() -> Dict[str, Any]:
     ensure_incident_workflow_support()
+    agg_total_query = f"""
+        SELECT count()
+        FROM (
+            SELECT {_incident_key_sql('incident_key')}
+            FROM siem.alerts_raw
+            GROUP BY incident_key
+            HAVING incident_key != ''
+        )
+    """
+    agg_open_query = f"""
+        SELECT count()
+        FROM (
+            SELECT {_incident_key_sql('incident_key')}
+            FROM siem.alerts_raw
+            GROUP BY incident_key
+            HAVING incident_key != ''
+               AND countIf(lower(status) NOT IN ('closed', 'false_positive')) > 0
+        )
+    """
     return {
-        'agg_total': int(_scalar("SELECT count() FROM siem.alerts_agg")),
-        'agg_open': int(_scalar("SELECT count() FROM siem.alerts_agg WHERE lower(status) != 'closed'")),
+        'agg_total': int(_scalar(agg_total_query)),
+        'agg_open': int(_scalar(agg_open_query)),
         'raw_total': int(_scalar("SELECT count() FROM siem.alerts_raw")),
         'critical_raw': int(_scalar("SELECT count() FROM siem.alerts_raw WHERE lower(severity) = 'critical'")),
         'new_raw': int(_scalar("SELECT count() FROM siem.alerts_raw WHERE lower(status) = 'new'")),
@@ -943,25 +1137,53 @@ def update_alert_assignment(
     note: str = "",
 ) -> Dict[str, Any]:
     ensure_incident_workflow_support()
-    target = "siem.alerts_raw" if view == "raw" else "siem.alerts_agg"
-    id_column = "alert_id" if view == "raw" else "agg_id"
     next_status = (status or "new").strip().lower()
     next_assignee = (assignee or "").strip()
     safe_status = _sql_quote(next_status)
     safe_assignee = _sql_quote(next_assignee)
     safe_id = _sql_quote(record_id)
-    current_query = f"""
-        SELECT rule_id, lower(status) AS status, assignee
-        FROM {target}
-        WHERE toString({id_column}) = {safe_id}
-        LIMIT 1
-    """
-    result = get_ch_client().query(current_query).result_rows
-    if not result:
-        raise ValueError("Alert or incident not found")
-    rule_id, current_status, current_assignee = result[0]
-    current_status = str(current_status or "new").lower()
-    current_assignee = str(current_assignee or "")
+    if view == "raw":
+        target = "siem.alerts_raw"
+        selector = f"toString(alert_id) = {safe_id}"
+        current_query = f"""
+            SELECT rule_id, lower(status) AS status, assignee
+            FROM {target}
+            WHERE {selector}
+            LIMIT 1
+        """
+        result = get_ch_client().query(current_query).result_rows
+        if not result:
+            raise ValueError("Alert or incident not found")
+        rule_id, current_status, current_assignee = result[0]
+        current_status = str(current_status or "new").lower()
+        current_assignee = str(current_assignee or "")
+    else:
+        target = "siem.alerts_raw"
+        incident_expr = "if(entity_key != '', entity_key, if(source != '' AND source != 'stream', source, JSONExtractString(context_json, 'source')))"
+        selector = f"{incident_expr} = {safe_id}"
+        incident_rows = [
+            {
+                "rule_id": int(row["rule_id"]),
+                "status": str(row["status"] or "new").lower(),
+                "assignee": str(row["assignee"] or ""),
+                "updated_ts": _fmt(row.get("updated_ts")),
+                "ts_last": _fmt(row.get("ts_last")),
+            }
+            for row in get_ch_client().query(
+                f"""
+                SELECT rule_id, lower(status) AS status, assignee, updated_ts, ts_last
+                FROM siem.alerts_raw
+                WHERE {selector}
+                ORDER BY updated_ts DESC, ts_last DESC
+                LIMIT 5000
+                """
+            ).named_results()
+        ]
+        if not incident_rows:
+            raise ValueError("Alert or incident not found")
+        rule_id = int(incident_rows[0]["rule_id"])
+        current_status = _incident_status_value(incident_rows)
+        current_assignee = _incident_assignee_value(incident_rows)
     if next_status == current_status and next_assignee != current_assignee:
         if next_assignee and current_status in {"new", "open", "triaged", "reopened"}:
             next_status = "assigned"
@@ -980,7 +1202,7 @@ def update_alert_assignment(
             status = {safe_status},
             assignee = {safe_assignee},
             updated_ts = now()
-        WHERE toString({id_column}) = {safe_id}
+        WHERE {selector}
         """
     )
     get_ch_client().insert(

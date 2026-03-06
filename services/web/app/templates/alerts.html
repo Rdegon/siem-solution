@@ -88,11 +88,33 @@ const alertDrawerPanel = document.getElementById('alertDrawerPanel');
 const alertDrawerOverlay = document.getElementById('alertDrawerOverlay');
 const closeAlertDrawerBtn = document.getElementById('closeAlertDrawerBtn');
 let selectedIndex = null;
+function parseJsonBlob(value) {
+    if (!value) return null;
+    if (typeof value === 'object') return value;
+    try {
+        return JSON.parse(value);
+    } catch (error) {
+        return null;
+    }
+}
+function renderKvSection(title, payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Object.keys(payload).length) return '';
+    return `<div style="margin-top:14px;"><div class="hint">${escapeHtml(title)}</div><div class="kv-list">${Object.entries(payload).map(([key, value]) => `
+        <div class="kv"><div class="kv-key">${escapeHtml(key)}</div><div class="kv-value">${escapeHtml(typeof value === 'object' ? JSON.stringify(value) : value)}</div></div>
+    `).join('')}</div></div>`;
+}
 function rowKey(row) {
     return mode === 'raw' ? String(row.alert_id) : String(row.agg_id);
 }
 function eventLinkForRow(row) {
     if (mode === 'raw' && row.source) return `/events?q=${encodeURIComponent(`log_source = '${row.source}'`)}`;
+    if (mode === 'agg' && Array.isArray(row.sources) && row.sources.length === 1) {
+        return `/events?q=${encodeURIComponent(`log_source = '${row.sources[0]}'`)}`;
+    }
+    if (mode === 'agg' && Array.isArray(row.sources) && row.sources.length > 1) {
+        const expr = row.sources.slice(0, 4).map((source) => `log_source = '${String(source).replace(/'/g, "''")}'`).join(' OR ');
+        return `/events?q=${encodeURIComponent(expr)}`;
+    }
     if (row.entity_key) return `/events?q=${encodeURIComponent(`log_source = '${row.entity_key}'`)}`;
     return `/events?q=${encodeURIComponent(`message ILIKE '%${row.rule_name}%'`)}`;
 }
@@ -186,8 +208,12 @@ function renderDrawer(row) {
         alertDrawer.innerHTML = '<div class="drawer-empty">Click a row in the queue to inspect the incident or alert.</div>';
         return;
     }
-    const contextBlock = mode === 'raw' ? row.context_json : row.group_key_json;
-    const samplesBlock = mode === 'agg' ? row.samples_json : '';
+    const context = mode === 'raw' ? (row.context || parseJsonBlob(row.context_json)) : (row.group_key || parseJsonBlob(row.group_key_json));
+    const samples = mode === 'agg' ? (row.samples || parseJsonBlob(row.samples_json)) : null;
+    const cluster = row.cluster || {};
+    const sourceChips = mode === 'raw'
+        ? [row.source || row.entity_key].filter(Boolean)
+        : (row.sources || []);
     const chips = `<div class="chip-row" style="margin-bottom:14px;"><a class="chip active" href="${eventLinkForRow(row)}">Open related events</a><span class="chip">rule_id: ${escapeHtml(row.rule_id)}</span><span class="chip">status: ${escapeHtml(row.status)}</span>${row.assignee ? `<span class="chip">assignee: ${escapeHtml(row.assignee)}</span>` : ''}</div>`;
     const allowedStatuses = Array.from(new Set([row.status, ...(statusTransitions[row.status] || [])]));
     const lifecycle = canEditWorkflow ? `
@@ -212,10 +238,54 @@ function renderDrawer(row) {
         </div>
     ` : `<div class="page-note" style="margin-bottom:14px;">Current role is read-only for incident workflow updates.</div>`;
     const details = Object.entries(row).map(([key, value]) => {
+        if (['context', 'cluster', 'samples', 'group_key', 'sources'].includes(key)) return '';
         const formatted = key.includes('ts') ? formatDisplayTimestamp(value) : escapeHtml(value);
         return `<div class="kv"><div class="kv-key">${escapeHtml(key)}</div><div class="kv-value">${formatted}</div></div>`;
     }).join('');
-    alertDrawer.innerHTML = `${chips}${lifecycle}<div class="kv-list">${details}</div><div id="alertHistoryBlock" style="margin-top:14px;"><div class="hint">History</div><div class="page-note">Loading history...</div></div>${contextBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(contextBlock)}</div>` : ''}${samplesBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(samplesBlock)}</div>` : ''}`;
+    const originSection = `
+        <div style="margin-bottom:14px;">
+            <div class="hint">Origin and scope</div>
+            <div class="chip-row">
+                ${sourceChips.map((item) => `<span class="chip">${escapeHtml(item)}</span>`).join('') || '<span class="page-note">Source is not available.</span>'}
+                ${row.entity_key ? `<span class="chip">entity: ${escapeHtml(row.entity_key)}</span>` : ''}
+                ${mode === 'agg' && row.raw_hits_total ? `<span class="chip">raw hits: ${Number(row.raw_hits_total)}</span>` : ''}
+                ${mode === 'agg' && row.raw_alerts_total ? `<span class="chip">raw alerts: ${Number(row.raw_alerts_total)}</span>` : ''}
+            </div>
+        </div>
+    `;
+    const clusterSection = cluster && Object.keys(cluster).length ? `
+        <div style="margin-top:14px;">
+            <div class="hint">Incident cluster</div>
+            <div class="kv-list">
+                <div class="kv"><div class="kv-key">Sources</div><div class="kv-value">${escapeHtml((cluster.sources || []).join(', ') || 'n/a')}</div></div>
+                <div class="kv"><div class="kv-key">Rules</div><div class="kv-value">${escapeHtml((cluster.rule_names || []).join(', ') || 'n/a')}</div></div>
+                <div class="kv"><div class="kv-key">Raw alerts</div><div class="kv-value">${Number(cluster.raw_alerts || 0)}</div></div>
+                <div class="kv"><div class="kv-key">Total hits</div><div class="kv-value">${Number(cluster.total_hits || 0)}</div></div>
+                <div class="kv"><div class="kv-key">First seen</div><div class="kv-value">${escapeHtml(formatDisplayTimestamp(cluster.cluster_first || ''))}</div></div>
+                <div class="kv"><div class="kv-key">Last seen</div><div class="kv-value">${escapeHtml(formatDisplayTimestamp(cluster.cluster_last || ''))}</div></div>
+            </div>
+        </div>
+    ` : '';
+    const contextSection = renderKvSection(mode === 'raw' ? 'Alert context' : 'Group key', context);
+    const samplesSection = Array.isArray(samples) && samples.length ? `
+        <div style="margin-top:14px;">
+            <div class="hint">Representative events</div>
+            <div class="kv-list">
+                ${samples.map((sample, index) => {
+                    const payload = parseJsonBlob(sample) || sample;
+                    return `
+                        <div class="panel" style="background:var(--surface-alt); border-radius:18px;">
+                            <div class="panel-body" style="padding:14px 16px;">
+                                <div class="hint">Sample ${index + 1}</div>
+                                ${renderKvSection('Fields', payload)}
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    ` : '';
+    alertDrawer.innerHTML = `${chips}${lifecycle}${originSection}<div class="kv-list">${details}</div>${clusterSection}${contextSection}<div id="alertHistoryBlock" style="margin-top:14px;"><div class="hint">History</div><div class="page-note">Loading history...</div></div>${samplesSection}`;
     loadHistory(row);
     if (canEditWorkflow) {
         const saveBtn = document.getElementById('saveAlertStateBtn');
