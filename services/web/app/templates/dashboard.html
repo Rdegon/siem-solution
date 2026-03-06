@@ -69,7 +69,7 @@ function renderDashboardTimeline() {
         const label = formatDisplayTimestamp(point.bucket).slice(11, 16);
         return `<text x="${point.x.toFixed(2)}" y="${(height - 14).toFixed(2)}" text-anchor="middle" class="timeline-axis-label">${escapeHtml(label)}</text>`;
     }).join('');
-    const circles = points.map((point) => `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4" class="timeline-point"><title>${escapeHtml(formatDisplayTimestamp(point.bucket))}: ${point.count}</title></circle>`).join('');
+    const circles = points.map((point, index) => `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4" class="timeline-point" data-index="${index}"></circle>`).join('');
     timelineContainer.innerHTML = `
         <svg viewBox="0 0 ${width} ${height}" class="timeline-svg" aria-label="Event volume chart" preserveAspectRatio="none">
             <defs>
@@ -84,10 +84,39 @@ function renderDashboardTimeline() {
             ${circles}
             ${labels}
         </svg>
+        <div class="timeline-tooltip" id="dashboardTimelineTooltip"></div>
     `;
+    const tooltip = document.getElementById('dashboardTimelineTooltip');
+    const svg = timelineContainer.querySelector('svg');
+    const pointNodes = Array.from(timelineContainer.querySelectorAll('.timeline-point'));
+    const summaryText = `Total ${counts.reduce((sum, value) => sum + value, 0)} events, peak ${maxValue} per hour, latest bucket ${formatDisplayTimestamp(points[points.length - 1].bucket)}.`;
+    function hideTooltip() {
+        pointNodes.forEach((node) => node.classList.remove('is-active'));
+        if (tooltip) tooltip.classList.remove('open');
+        if (timelineMeta) timelineMeta.textContent = summaryText;
+    }
+    function showTooltip(index) {
+        const point = points[index];
+        const node = pointNodes[index];
+        if (!point || !node || !tooltip || !svg) return;
+        pointNodes.forEach((item) => item.classList.toggle('is-active', item === node));
+        const rect = svg.getBoundingClientRect();
+        tooltip.style.left = `${(point.x / width) * rect.width + 12}px`;
+        tooltip.style.top = `${(point.y / height) * rect.height + 10}px`;
+        tooltip.innerHTML = `<strong>${point.count}</strong><div>${escapeHtml(formatDisplayTimestamp(point.bucket))}</div><div class="page-note">Events in this hour bucket</div>`;
+        tooltip.classList.add('open');
+        if (timelineMeta) {
+            timelineMeta.textContent = `${formatDisplayTimestamp(point.bucket)}: ${point.count} events. ${summaryText}`;
+        }
+    }
+    pointNodes.forEach((node, index) => {
+        node.addEventListener('mouseenter', () => showTooltip(index));
+        node.addEventListener('focus', () => showTooltip(index));
+    });
+    timelineContainer.addEventListener('mouseleave', hideTooltip);
+    svg.addEventListener('blur', hideTooltip, true);
     if (timelineMeta) {
-        const total = counts.reduce((sum, value) => sum + value, 0);
-        timelineMeta.textContent = `Total ${total} events, peak ${maxValue} per hour, latest bucket ${formatDisplayTimestamp(points[points.length - 1].bucket)}.`;
+        timelineMeta.textContent = summaryText;
     }
 }
 function renderLegend(containerId, rows) {

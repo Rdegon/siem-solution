@@ -6,7 +6,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .auth import get_current_user
 from ..security import require_roles
-from ..deps import fetch_alert_history, fetch_alert_metrics, fetch_alerts_agg, fetch_alerts_raw, update_alert_assignment
+from ..deps import (
+    INCIDENT_STATUS_TRANSITIONS,
+    fetch_alert_history,
+    fetch_alert_metrics,
+    fetch_alerts_agg,
+    fetch_alerts_raw,
+    update_alert_assignment,
+)
 from ..templates import templates
 
 router = APIRouter()
@@ -38,6 +45,7 @@ async def alerts_page(
             'alerts_raw': alerts_raw,
             'metrics': metrics,
             'view': 'raw' if view == 'raw' else 'agg',
+            'status_transitions': {key: sorted(values) for key, values in INCIDENT_STATUS_TRANSITIONS.items()},
             'error': error,
         },
     )

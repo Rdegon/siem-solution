@@ -18,6 +18,10 @@ SYSLOG_RE = re.compile(
     r"^(?:<(?P<pri>\d+)>)?(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})\s+(?P<clock>\d{2}:\d{2}:\d{2})\s+"
     r"(?P<host>\S+)\s+(?P<program>[\w./-]+?)(?:\[(?P<pid>\d+)\])?:\s?(?P<body>.*)$"
 )
+SYSLOG_RFC5424_RE = re.compile(
+    r"^<(?P<pri>\d+)>(?P<version>\d)\s+(?P<timestamp>\S+)\s+(?P<host>\S+)\s+"
+    r"(?P<program>\S+)\s+(?P<pid>\S+)\s+(?P<msgid>\S+)\s+(?P<structured>(?:-|\[[^\]]*\](?:\[[^\]]*\])*))\s*(?P<body>.*)$"
+)
 KV_RE = re.compile(r'([A-Za-z0-9_.-]+)=(".*?"|\'.*?\'|[^ ]+)')
 IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 SSHD_ACCEPT_RE = re.compile(
@@ -567,6 +571,7 @@ def _parse_linux_syslog(raw_event: Dict[str, Any]) -> Dict[str, Any]:
     message = _clean_value(raw_event.get("message"))
     source_ip = _clean_value(raw_event.get("source"))
     match = SYSLOG_RE.match(message)
+    match_rfc5424 = SYSLOG_RFC5424_RE.match(message)
 
     enriched: Dict[str, Any] = {
         "event.original": message,
@@ -581,17 +586,41 @@ def _parse_linux_syslog(raw_event: Dict[str, Any]) -> Dict[str, Any]:
 
     body = message
     program = ""
-    if match:
+    if match_rfc5424:
+        body = _clean_value(match_rfc5424.group("body"))
+        program = _clean_value(match_rfc5424.group("program")).lower()
+        pri = int(match_rfc5424.group("pri") or 13)
+        severity_code = pri % 8
+        level = SYSLOG_LEVEL_MAP.get(severity_code, "info")
+        host_name = _clean_value(match_rfc5424.group("host"))
+        process_pid = _clean_value(match_rfc5424.group("pid"))
+        if process_pid == "-":
+            process_pid = ""
+        _merge_non_empty(
+            enriched,
+            {
+                "log.level": level,
+                "host.name": host_name,
+                "log_source": host_name or source_ip,
+                "process.name": "" if program == "-" else program,
+                "process.pid": process_pid,
+                "event.provider": f"linux.{program}" if program and program != "-" else "linux.syslog",
+            },
+        )
+        enriched["event.severity"] = level
+    elif match:
         body = _clean_value(match.group("body"))
         program = _clean_value(match.group("program")).lower()
         pri = int(match.group("pri") or 13)
         severity_code = pri % 8
         level = SYSLOG_LEVEL_MAP.get(severity_code, "info")
+        host_name = _clean_value(match.group("host"))
         _merge_non_empty(
             enriched,
             {
                 "log.level": level,
-                "host.name": _clean_value(match.group("host")),
+                "host.name": host_name,
+                "log_source": host_name or source_ip,
                 "process.name": program,
                 "process.pid": _clean_value(match.group("pid")),
                 "event.provider": f"linux.{program}" if program else "linux.syslog",
@@ -723,7 +752,9 @@ def _build_uem(rule: Optional[NormalizerRule], raw_event: Dict[str, Any]) -> Dic
     if "host.name" not in uem or uem.get("host.name") in (None, ""):
         uem["host.name"] = raw_event.get("source", "") or raw_event.get("log_source", "") or ""
     if "log_source" not in uem or uem.get("log_source") in (None, ""):
-        uem["log_source"] = raw_event.get("source", "") or raw_event.get("log_source", "") or ""
+        uem["log_source"] = raw_event.get("host.name", "") or raw_event.get("source", "") or raw_event.get("log_source", "") or ""
+    elif raw_event.get("host.name") and raw_event.get("log_source") == raw_event.get("source"):
+        uem["log_source"] = raw_event.get("host.name") or uem.get("log_source")
     return uem
 
 

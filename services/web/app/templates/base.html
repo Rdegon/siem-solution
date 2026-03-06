@@ -272,6 +272,7 @@
         .chart-label, .chart-value { font-size: 11px; color: var(--text-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
         .chart-value { color: var(--text); font-weight: 600; }
         .timeline-surface {
+            position: relative;
             min-height: 250px;
             border-radius: 18px;
             background: linear-gradient(180deg, rgba(11, 24, 43, .42), rgba(11, 24, 43, .18));
@@ -307,6 +308,37 @@
             fill: var(--surface-solid);
             stroke: var(--accent);
             stroke-width: 2;
+            transition: r .14s ease, fill .14s ease;
+        }
+        .timeline-point.is-active {
+            fill: var(--accent);
+        }
+        .timeline-tooltip {
+            position: absolute;
+            transform: translate(-50%, calc(-100% - 12px));
+            pointer-events: none;
+            min-width: 168px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            background: rgba(6, 14, 28, .94);
+            box-shadow: 0 18px 34px rgba(2, 6, 23, .28);
+            color: #e5eefc;
+            opacity: 0;
+            transition: opacity .12s ease;
+            z-index: 2;
+        }
+        .timeline-tooltip.open {
+            opacity: 1;
+        }
+        .timeline-tooltip strong {
+            display: block;
+            font-size: 22px;
+            line-height: 1.1;
+            margin-bottom: 4px;
+        }
+        .timeline-tooltip .page-note {
+            color: rgba(226, 232, 240, .82);
         }
         .mini-list { display: grid; gap: 10px; }
         .mini-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }

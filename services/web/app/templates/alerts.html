@@ -78,6 +78,7 @@ const mode = {{ view | tojson }};
 const alertsAgg = {{ alerts_agg | tojson }};
 const alertsRaw = {{ alerts_raw | tojson }};
 const canEditWorkflow = {{ (user.role in ['admin', 'analyst']) | tojson }};
+const statusTransitions = {{ status_transitions | tojson }};
 const rows = mode === 'raw' ? alertsRaw : alertsAgg;
 const alertsHead = document.getElementById('alertsHead');
 const alertsBody = document.getElementById('alertsBody');
@@ -188,12 +189,13 @@ function renderDrawer(row) {
     const contextBlock = mode === 'raw' ? row.context_json : row.group_key_json;
     const samplesBlock = mode === 'agg' ? row.samples_json : '';
     const chips = `<div class="chip-row" style="margin-bottom:14px;"><a class="chip active" href="${eventLinkForRow(row)}">Open related events</a><span class="chip">rule_id: ${escapeHtml(row.rule_id)}</span><span class="chip">status: ${escapeHtml(row.status)}</span>${row.assignee ? `<span class="chip">assignee: ${escapeHtml(row.assignee)}</span>` : ''}</div>`;
+    const allowedStatuses = Array.from(new Set([row.status, ...(statusTransitions[row.status] || [])]));
     const lifecycle = canEditWorkflow ? `
         <div class="grid-2" style="margin-bottom:14px;">
             <div>
                 <label class="hint" for="statusSelect">Status</label>
                 <select id="statusSelect" class="select">
-                    ${['open', 'new', 'triaged', 'assigned', 'in_progress', 'closed', 'false_positive', 'reopened'].map((value) => `<option value="${value}" ${row.status === value ? 'selected' : ''}>${value}</option>`).join('')}
+                    ${allowedStatuses.map((value) => `<option value="${value}" ${row.status === value ? 'selected' : ''}>${value}</option>`).join('')}
                 </select>
             </div>
             <div>

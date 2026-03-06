@@ -149,7 +149,7 @@ class WriterWorker:
             tags.append(tag)
         return tags
 
-    def _build_normalized_json(self, fields: Dict[str, str]) -> str:
+    def _build_normalized_json(self, fields: Dict[str, str], active_list_matches: List[Dict[str, str]] | None = None) -> str:
         payload = {
             "provider": fields.get("event.provider", ""),
             "category": fields.get("event.category", ""),
@@ -173,6 +173,9 @@ class WriterWorker:
                 "name": fields.get("process.name", ""),
                 "executable": fields.get("process.executable", ""),
                 "command_line": fields.get("process.command_line", "") or fields.get("process.command", ""),
+            },
+            "enrichment": {
+                "active_lists": active_list_matches or [],
             },
             "message": fields.get("event.original") or fields.get("message") or "",
         }
@@ -213,7 +216,7 @@ class WriterWorker:
         self._active_lists = active_lists
         self._active_lists_loaded_at = now
 
-    def _match_active_lists(self, fields: Dict[str, str]) -> List[str]:
+    def _match_active_lists(self, fields: Dict[str, str]) -> Tuple[List[str], List[Dict[str, str]]]:
         self._refresh_active_lists()
         candidates = {
             "ip": [fields.get("source.ip", ""), fields.get("destination.ip", ""), fields.get("log_source", "")],
@@ -224,6 +227,8 @@ class WriterWorker:
         }
         tags: List[str] = []
         seen: set[str] = set()
+        match_seen: set[tuple[str, str, str]] = set()
+        matches: List[Dict[str, str]] = []
         for value_type, values in candidates.items():
             bucket = self._active_lists.get(value_type, {})
             if not bucket:
@@ -236,6 +241,17 @@ class WriterWorker:
                     for raw_value, meta in bucket.items():
                         if raw_value and raw_value in normalized:
                             prefix = {"watch": "watchlist", "allow": "allowlist", "deny": "denylist"}.get(meta.get("list_kind", "watch"), "watchlist")
+                            match_key = (meta["list_name"], meta.get("list_kind", "watch"), raw_value)
+                            if match_key not in match_seen:
+                                match_seen.add(match_key)
+                                matches.append({
+                                    "list_name": meta["list_name"],
+                                    "list_kind": meta.get("list_kind", "watch"),
+                                    "value_type": value_type,
+                                    "value": raw_value,
+                                    "label": meta.get("label", ""),
+                                    "tags": meta.get("tags", ""),
+                                })
                             for tag in [f"{prefix}:{meta['list_name']}", *self._normalize_tags(meta.get("tags", ""))]:
                                 if tag and tag not in seen:
                                     seen.add(tag)
@@ -245,11 +261,22 @@ class WriterWorker:
                 if not meta:
                     continue
                 prefix = {"watch": "watchlist", "allow": "allowlist", "deny": "denylist"}.get(meta.get("list_kind", "watch"), "watchlist")
+                match_key = (meta["list_name"], meta.get("list_kind", "watch"), normalized)
+                if match_key not in match_seen:
+                    match_seen.add(match_key)
+                    matches.append({
+                        "list_name": meta["list_name"],
+                        "list_kind": meta.get("list_kind", "watch"),
+                        "value_type": value_type,
+                        "value": normalized,
+                        "label": meta.get("label", ""),
+                        "tags": meta.get("tags", ""),
+                    })
                 for tag in [f"{prefix}:{meta['list_name']}", *self._normalize_tags(meta.get("tags", ""))]:
                     if tag and tag not in seen:
                         seen.add(tag)
                         tags.append(tag)
-        return tags
+        return tags, matches
 
     def _build_row(self, msg_id: str, fields: Dict[str, str]) -> Tuple[Any, ...]:
         ts = self._parse_event_ts(fields)
@@ -278,11 +305,12 @@ class WriterWorker:
         message = fields.get("event.original") or fields.get("message") or ""
 
         tags = self._normalize_tags(fields.get("tags"))
-        tags.extend(self._match_active_lists(fields))
+        active_list_tags, active_list_matches = self._match_active_lists(fields)
+        tags.extend(active_list_tags)
         if subcategory:
             tags.append(f"event_type:{subcategory}")
         tags_text = ",".join(dict.fromkeys(tag for tag in tags if tag))
-        normalized_json = self._build_normalized_json(fields)
+        normalized_json = self._build_normalized_json(fields, active_list_matches)
 
         return (
             ts,

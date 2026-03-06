@@ -121,6 +121,10 @@ def _event_view_sql(storage: str = 'hot') -> str:
     return _event_select_sql(table_name)
 
 
+def _event_source_label_expr(alias: str = "source_name") -> str:
+    return f"if(host_name != '' AND host_name != '-', host_name, log_source) AS {alias}"
+
+
 @lru_cache(maxsize=1)
 def get_ch_client() -> clickhouse_connect.driver.Client:
     ch = CONFIG.ch
@@ -526,7 +530,7 @@ def fetch_alert_status_breakdown(hours: int = 24) -> List[Dict[str, Any]]:
 def fetch_top_sources(limit: int = 8, hours: int = 24) -> List[Dict[str, Any]]:
     query = f"""
         SELECT
-            log_source,
+            {_event_source_label_expr('log_source')},
             count() AS events,
             max(ts) AS last_seen
         FROM siem.events
@@ -569,7 +573,7 @@ def fetch_dashboard_metrics() -> Dict[str, Any]:
         'open_incidents_24h': int(_scalar("SELECT count() FROM siem.alerts_agg WHERE ts >= now() - INTERVAL 24 HOUR AND lower(status) != 'closed'")),
         'new_alerts_24h': int(_scalar("SELECT count() FROM siem.alerts_raw WHERE ts >= now() - INTERVAL 24 HOUR AND lower(status) = 'new'")),
         'critical_events_24h': int(_scalar("SELECT count() FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR AND lower(severity) = 'critical'")),
-        'active_sources_24h': int(_scalar("SELECT countDistinct(log_source) FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR")),
+        'active_sources_24h': int(_scalar(f"SELECT countDistinct(if(host_name != '' AND host_name != '-', host_name, log_source)) FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR")),
         'audit_events_24h': int(_scalar("SELECT count() FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR AND message LIKE '%auditd:%'")),
     }
 
@@ -592,7 +596,7 @@ def fetch_recent_alerts(limit: int = 10) -> List[Dict[str, Any]]:
 def fetch_assets(limit: int = 50, hours: int = 24) -> List[Dict[str, Any]]:
     query = f"""
         SELECT
-            log_source,
+            {_event_source_label_expr('log_source')},
             count() AS events,
             max(ts) AS last_seen,
             countIf(lower(severity) IN ('critical', 'high')) AS notable_events,
@@ -958,6 +962,13 @@ def update_alert_assignment(
     rule_id, current_status, current_assignee = result[0]
     current_status = str(current_status or "new").lower()
     current_assignee = str(current_assignee or "")
+    if next_status == current_status and next_assignee != current_assignee:
+        if next_assignee and current_status in {"new", "open", "triaged", "reopened"}:
+            next_status = "assigned"
+            safe_status = _sql_quote(next_status)
+        elif not next_assignee and current_status == "assigned":
+            next_status = "triaged"
+            safe_status = _sql_quote(next_status)
     if next_status != current_status:
         allowed = INCIDENT_STATUS_TRANSITIONS.get(current_status, set())
         if next_status not in allowed:
@@ -1614,6 +1625,131 @@ tags:
   - attack.t1543
 """.strip(),
     },
+    {
+        "id": 1025,
+        "title": "Linux Systemd Service Disabled",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Systemd Service Disabled
+id: sigma-linux-systemd-service-disabled
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_systemd_service_disabled
+  condition: selection
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1562
+""".strip(),
+    },
+    {
+        "id": 1026,
+        "title": "Linux Packet Capture Utility",
+        "level": "medium",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Packet Capture Utility
+id: sigma-linux-packet-capture-utility
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_packet_capture
+  condition: selection
+level: medium
+tags:
+  - attack.discovery
+  - attack.t1040
+""".strip(),
+    },
+    {
+        "id": 1027,
+        "title": "Linux Setuid Bit Modified",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "process.executable",
+        "yaml": """
+title: Linux Setuid Bit Modified
+id: sigma-linux-setuid-bit-modified
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_setuid_bit_modified
+  condition: selection
+level: high
+tags:
+  - attack.privilege_escalation
+  - attack.t1548
+""".strip(),
+    },
+    {
+        "id": 1028,
+        "title": "Linux File Capability Modified",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "process.executable",
+        "yaml": """
+title: Linux File Capability Modified
+id: sigma-linux-file-capability-modified
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_file_capability_modified
+  condition: selection
+level: high
+tags:
+  - attack.privilege_escalation
+  - attack.t1548
+""".strip(),
+    },
+    {
+        "id": 1029,
+        "title": "Linux System Recon Burst",
+        "level": "medium",
+        "window_s": 300,
+        "threshold": 3,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux System Recon Burst
+id: sigma-linux-system-recon-burst
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_system_recon
+  condition: selection
+level: medium
+tags:
+  - attack.discovery
+  - attack.t1082
+""".strip(),
+    },
 ]
 
 
@@ -2134,7 +2270,7 @@ def fetch_asset_categories() -> List[Dict[str, Any]]:
     return [
         {
             "name": "Devices",
-            "count": int(_scalar("SELECT countDistinct(log_source) FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR")),
+            "count": int(_scalar("SELECT countDistinct(if(host_name != '' AND host_name != '-', host_name, log_source)) FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR")),
             "description": "Observed hosts and sources active during the last 24 hours.",
         },
         {
