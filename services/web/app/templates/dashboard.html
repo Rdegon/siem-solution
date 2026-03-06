@@ -14,20 +14,20 @@
 <div class="grid-2">
     <section class="panel">
         <div class="panel-header"><div><h3 class="panel-title">Incident queue</h3><p class="panel-subtitle">Most recent incidents and alerts for analyst triage.</p></div><a class="btn ghost" href="/alerts">Open incidents</a></div>
-        <div class="panel-body table-wrap"><table><thead><tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Status</th></tr></thead><tbody>{% for alert in recent_alerts %}<tr><td>{{ alert.ts_last }}</td><td>{{ alert.rule_name }}</td><td><span class="severity sev-{{ alert.severity }}">{{ alert.severity }}</span></td><td>{{ alert.hits }}</td><td><span class="status-pill">{{ alert.status }}</span></td></tr>{% endfor %}</tbody></table></div>
+        <div class="panel-body table-wrap"><table><thead><tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Status</th></tr></thead><tbody>{% for alert in recent_alerts %}<tr><td data-ts="{{ alert.ts_last }}">{{ alert.ts_last }}</td><td>{{ alert.rule_name }}</td><td><span class="severity sev-{{ alert.severity }}">{{ alert.severity }}</span></td><td>{{ alert.hits }}</td><td><span class="status-pill">{{ alert.status }}</span></td></tr>{% endfor %}</tbody></table></div>
     </section>
     <section class="panel">
         <div class="panel-header"><div><h3 class="panel-title">Event volume</h3><p class="panel-subtitle">Last 24 hours, one-hour buckets.</p></div></div>
-        <div class="panel-body"><div id="dashboardTimeline" class="chart-bars"></div></div>
+        <div class="panel-body"><div id="dashboardTimeline" class="chart-bars compact"></div></div>
     </section>
 </div>
 <div class="grid-3">
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Events by severity</h3><p class="panel-subtitle">Severity distribution for the last 24 hours.</p></div></div><div class="panel-body donut-wrap"><div class="donut" id="eventsSeverityDonut"><div class="donut-center" id="eventsSeverityTotal">0</div></div><div class="legend" id="eventsSeverityLegend"></div></div></section>
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Alerts by status</h3><p class="panel-subtitle">SOC workflow state for raw alerts.</p></div></div><div class="panel-body donut-wrap"><div class="donut" id="alertStatusDonut"><div class="donut-center" id="alertStatusTotal">0</div></div><div class="legend" id="alertStatusLegend"></div></div></section>
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Alerts by severity</h3><p class="panel-subtitle">Which alert levels dominate the queue.</p></div></div><div class="panel-body donut-wrap"><div class="donut" id="alertSeverityDonut"><div class="donut-center" id="alertSeverityTotal">0</div></div><div class="legend" id="alertSeverityLegend"></div></div></section>
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Events by severity</h3><p class="panel-subtitle">Severity distribution for the last 24 hours.</p></div></div><div class="panel-body"><div class="stacked-bar" id="eventsSeverityBar"></div><div class="legend" id="eventsSeverityLegend"></div></div></section>
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Alerts by status</h3><p class="panel-subtitle">SOC workflow state for raw alerts.</p></div></div><div class="panel-body"><div class="stacked-bar" id="alertStatusBar"></div><div class="legend" id="alertStatusLegend"></div></div></section>
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Alerts by severity</h3><p class="panel-subtitle">Which alert levels dominate the queue.</p></div></div><div class="panel-body"><div class="stacked-bar" id="alertSeverityBar"></div><div class="legend" id="alertSeverityLegend"></div></div></section>
 </div>
 <div class="grid-2">
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top sources</h3><p class="panel-subtitle">Most active monitored sources during the last 24 hours.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Source</th><th>Events</th><th>Last seen</th><th>High + critical</th></tr></thead><tbody>{% for source in top_sources %}<tr><td class="mono">{{ source.log_source }}</td><td>{{ source.events }}</td><td>{{ source.last_seen }}</td><td>{{ source.high_count + source.critical_count }}</td></tr>{% endfor %}</tbody></table></div></section>
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top sources</h3><p class="panel-subtitle">Most active monitored sources during the last 24 hours.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Source</th><th>Events</th><th>Last seen</th></tr></thead><tbody>{% for source in top_sources %}<tr><td class="mono">{{ source.log_source }}</td><td>{{ source.events }}</td><td data-ts="{{ source.last_seen }}">{{ source.last_seen }}</td></tr>{% endfor %}</tbody></table></div></section>
     <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top categories</h3><p class="panel-subtitle">Most frequent normalized categories in the event stream.</p></div></div><div class="panel-body"><div class="mini-list">{% set max_events = (top_categories[0].events if top_categories else 1) %}{% for row in top_categories %}<div class="mini-row"><div><div style="font-weight:600;">{{ row.category }}</div><div class="page-note">{{ row.events }} events</div></div><div style="width:160px;"><div class="mini-bar-track"><div class="mini-bar" style="width: {{ (row.events / max_events * 100) if max_events else 0 }}%;"></div></div></div></div>{% endfor %}</div></div></section>
 </div>
 </div>
@@ -39,10 +39,49 @@ const severityRows = {{ severity_breakdown | tojson }}.map((row) => ({ label: ro
 const alertSeverityRows = {{ alert_severity_breakdown | tojson }}.map((row) => ({ label: row.severity, count: row.cnt }));
 const alertStatusRows = {{ alert_status_breakdown | tojson }}.map((row) => ({ label: row.status, count: row.cnt }));
 const timelineContainer = document.getElementById('dashboardTimeline');
-if (timelineContainer) { const maxValue = Math.max(...timeline.map((item) => Number(item.cnt || 0)), 1); timelineContainer.innerHTML = timeline.map((item) => { const count = Number(item.cnt || 0); const height = Math.max(10, Math.round((count / maxValue) * 180)); const label = String(item.bucket || '').slice(5, 16); return `<div class="chart-col"><div class="chart-value">${count}</div><div class="chart-bar" style="height:${height}px"></div><div class="chart-label">${escapeHtml(label)}</div></div>`; }).join(''); }
-function renderLegend(containerId, rows) { const container = document.getElementById(containerId); if (!container) return; container.innerHTML = rows.map((row) => `<div class="legend-row"><span class="legend-swatch" style="background:${row.__color}"></span><span>${escapeHtml(row.label)}</span><strong>${Number(row.count || 0)}</strong></div>`).join(''); }
-renderDonut('eventsSeverityDonut', 'eventsSeverityTotal', severityRows); renderLegend('eventsSeverityLegend', severityRows);
-renderDonut('alertSeverityDonut', 'alertSeverityTotal', alertSeverityRows); renderLegend('alertSeverityLegend', alertSeverityRows);
-renderDonut('alertStatusDonut', 'alertStatusTotal', alertStatusRows); renderLegend('alertStatusLegend', alertStatusRows);
+function renderDashboardTimeline() {
+    if (!timelineContainer) return;
+    const maxValue = Math.max(...timeline.map((item) => Number(item.cnt || 0)), 1);
+    timelineContainer.innerHTML = timeline.map((item, index) => {
+        const count = Number(item.cnt || 0);
+        const height = Math.max(8, Math.round((count / maxValue) * 180));
+        const showLabel = index % 4 === 0 || index === timeline.length - 1;
+        const formatted = formatDisplayTimestamp(item.bucket || '');
+        const label = showLabel ? formatted.slice(11, 16) : '&nbsp;';
+        return `<div class="chart-col compact"><div class="chart-value">${count}</div><div class="chart-bar" style="height:${height}px"></div><div class="chart-label">${label}</div></div>`;
+    }).join('');
+}
+function renderLegend(containerId, rows) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const total = rows.reduce((sum, row) => sum + Number(row.count || 0), 0);
+    container.innerHTML = rows.map((row) => {
+        const count = Number(row.count || 0);
+        const percent = total ? Math.round((count / total) * 100) : 0;
+        return `<div class="legend-row"><span class="legend-swatch" style="background:${row.__color}"></span><span>${escapeHtml(row.label)}</span><strong>${count} <span class="page-note">(${percent}%)</span></strong></div>`;
+    }).join('');
+}
+function renderBreakdown(barId, legendId, rows) {
+    const bar = document.getElementById(barId);
+    if (!bar) return;
+    const total = rows.reduce((sum, row) => sum + Number(row.count || 0), 0);
+    const colors = ['#4b93ff', '#1ed7a4', '#ffb357', '#ff8fa3', '#7c95b4', '#8e63d3'];
+    bar.innerHTML = rows.map((row, index) => {
+        const count = Number(row.count || 0);
+        const width = total ? Math.max(4, (count / total) * 100) : 0;
+        row.__color = colors[index % colors.length];
+        return `<div class="stacked-segment" style="width:${width}%; background:${row.__color}" title="${escapeHtml(row.label)}: ${count}"></div>`;
+    }).join('') || '<div class="page-note">No data</div>';
+    renderLegend(legendId, rows);
+}
+renderDashboardTimeline();
+renderBreakdown('eventsSeverityBar', 'eventsSeverityLegend', severityRows);
+renderBreakdown('alertSeverityBar', 'alertSeverityLegend', alertSeverityRows);
+renderBreakdown('alertStatusBar', 'alertStatusLegend', alertStatusRows);
+window.addEventListener('rdegon:timezone-changed', () => {
+    renderDashboardTimeline();
+    applyTimestampFormatting(document);
+});
+applyTimestampFormatting(document);
 </script>
 {% endblock %}

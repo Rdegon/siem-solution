@@ -508,9 +508,7 @@ def fetch_top_sources(limit: int = 8, hours: int = 24) -> List[Dict[str, Any]]:
         SELECT
             log_source,
             count() AS events,
-            max(ts) AS last_seen,
-            countIf(lower(severity) = 'critical') AS critical_count,
-            countIf(lower(severity) = 'high') AS high_count
+            max(ts) AS last_seen
         FROM siem.events
         WHERE ts >= now() - INTERVAL {int(hours)} HOUR
         GROUP BY log_source
@@ -524,8 +522,6 @@ def fetch_top_sources(limit: int = 8, hours: int = 24) -> List[Dict[str, Any]]:
                 'log_source': row['log_source'] or 'unknown',
                 'events': int(row['events']),
                 'last_seen': _fmt(row['last_seen']),
-                'critical_count': int(row['critical_count']),
-                'high_count': int(row['high_count']),
             }
         )
     return rows
@@ -581,6 +577,7 @@ def fetch_assets(limit: int = 50, hours: int = 24) -> List[Dict[str, Any]]:
             max(ts) AS last_seen,
             countIf(lower(severity) IN ('critical', 'high')) AS notable_events,
             groupUniqArray(4)(category) AS categories,
+            groupUniqArray(4)(device_product) AS products,
             countIf(message LIKE '%auditd:%') AS audit_events
         FROM siem.events
         WHERE ts >= now() - INTERVAL {int(hours)} HOUR
@@ -598,6 +595,34 @@ def fetch_assets(limit: int = 50, hours: int = 24) -> List[Dict[str, Any]]:
                 'notable_events': int(row['notable_events']),
                 'audit_events': int(row['audit_events']),
                 'categories': [str(item) for item in row['categories']],
+                'products': [str(item) for item in row['products']],
+            }
+        )
+    return rows
+
+
+def fetch_normalizer_rules(limit: int = 100) -> List[Dict[str, Any]]:
+    query = f"""
+        SELECT
+            id,
+            priority,
+            source_type,
+            event_matcher,
+            uem_mapping
+        FROM siem.normalizer_rules
+        WHERE enabled = 1
+        ORDER BY priority ASC, id ASC
+        LIMIT {int(limit)}
+    """
+    rows: List[Dict[str, Any]] = []
+    for row in get_ch_client().query(query).named_results():
+        rows.append(
+            {
+                'id': int(row['id']),
+                'priority': int(row['priority']),
+                'source_type': str(row['source_type'] or ''),
+                'event_matcher': str(row['event_matcher'] or ''),
+                'uem_mapping': str(row['uem_mapping'] or '{}'),
             }
         )
     return rows
@@ -1980,7 +2005,7 @@ def _count_rule_matches(query_text: str, window: str = "24h") -> int:
     result = get_ch_client().query(
         f"""
         SELECT count() AS cnt
-        FROM ({EVENT_VIEW_SQL}) AS events_view
+        FROM ({_event_view_sql('all')}) AS events_view
         WHERE {_event_time_filter(window)}
           AND ({expression})
         """

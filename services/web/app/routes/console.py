@@ -16,6 +16,7 @@ from ..deps import (
     fetch_dashboard_metrics,
     fetch_detection_rules,
     fetch_events_timeseries,
+    fetch_normalizer_rules,
     fetch_recent_alerts,
     fetch_resource_overview,
     fetch_severity_breakdown,
@@ -67,12 +68,14 @@ def _render_assets_page(
     assets = []
     asset_categories = []
     detection_rules = []
+    normalizer_rules = []
     active_list_items = []
     load_error = error
     try:
         assets = fetch_assets(limit=50, hours=24)
         asset_categories = fetch_asset_categories()
         detection_rules = fetch_detection_rules(limit=200)
+        normalizer_rules = fetch_normalizer_rules(limit=120)
         active_list_items = fetch_active_list_items(limit=200)
     except Exception as exc:  # noqa: BLE001
         load_error = load_error or f'Unable to load assets and detection catalog: {exc!s}'
@@ -93,6 +96,7 @@ def _render_assets_page(
             'assets': assets,
             'asset_categories': asset_categories,
             'detection_rules': detection_rules,
+            'normalizer_rules': normalizer_rules,
             'active_list_items': active_list_items,
             'entity_fields': RULE_ENTITY_FIELDS,
             'rule_form': draft,
