@@ -182,11 +182,11 @@ def _alert_effective_source(source: Any, context_json: Any) -> str:
 
 
 def _alert_effective_source_sql(alias: str = "effective_source") -> str:
-    return f"if(source != '' AND source != 'stream', source, JSONExtractString(context_json, 'source')) AS {alias}"
+    return f"if(source != '' AND source != 'stream', source, '') AS {alias}"
 
 
 def _incident_key_sql(alias: str = "incident_key") -> str:
-    source_expr = "if(source != '' AND source != 'stream', source, JSONExtractString(context_json, 'source'))"
+    source_expr = "if(source != '' AND source != 'stream', source, '')"
     return f"if(entity_key != '', entity_key, {source_expr}) AS {alias}"
 
 
@@ -605,7 +605,7 @@ def fetch_alerts_raw(limit: int = 200) -> List[Dict[str, Any]]:
         """
         SELECT
             entity_key,
-            groupUniqArray(8)(if(source != 'stream', source, JSONExtractString(context_json, 'source'))) AS sources,
+            groupUniqArray(8)(if(source != 'stream', source, '')) AS sources,
             groupUniqArray(8)(rule_name) AS rule_names,
             count() AS raw_alerts,
             sum(hits) AS total_hits,
@@ -1159,7 +1159,7 @@ def update_alert_assignment(
         current_assignee = str(current_assignee or "")
     else:
         target = "siem.alerts_raw"
-        incident_expr = "if(entity_key != '', entity_key, if(source != '' AND source != 'stream', source, JSONExtractString(context_json, 'source')))"
+        incident_expr = "if(entity_key != '', entity_key, if(source != '' AND source != 'stream', source, ''))"
         selector = f"{incident_expr} = {safe_id}"
         incident_rows = [
             {
