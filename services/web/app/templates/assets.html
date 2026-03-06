@@ -31,8 +31,9 @@
         gap: 16px;
     }
     .rule-card {
-        display: grid;
-        grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr) minmax(132px, auto);
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
         gap: 18px;
         padding: 20px;
         border-radius: 22px;
@@ -43,6 +44,7 @@
         display: grid;
         gap: 10px;
         min-width: 0;
+        flex: 1 1 420px;
     }
     .rule-title-row {
         display: flex;
@@ -61,6 +63,7 @@
         display: grid;
         gap: 10px;
         min-width: 0;
+        flex: 1 1 320px;
     }
     .rule-meta-grid {
         display: grid;
@@ -84,10 +87,14 @@
         display: grid;
         align-content: start;
         gap: 10px;
-        min-width: 130px;
+        flex: 0 0 132px;
+        min-width: 132px;
     }
     .rule-actions .btn {
         width: 100%;
+    }
+    .rule-query {
+        flex-basis: 100%;
     }
     .rule-query details {
         margin-top: 12px;
@@ -108,13 +115,15 @@
             grid-template-columns: 1fr;
         }
         .rule-card {
-            grid-template-columns: 1fr;
+            flex-direction: column;
         }
         .rule-meta-grid {
             grid-template-columns: 1fr;
         }
         .rule-actions {
+            width: 100%;
             grid-template-columns: repeat(2, minmax(0, 1fr));
+            flex: 1 1 100%;
         }
     }
 </style>

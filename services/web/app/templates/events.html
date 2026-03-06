@@ -161,7 +161,12 @@ function renderDrawer(row) {
         return;
     }
     const drillFields = ['log_source', 'src_ip', 'dst_ip', 'severity', 'category', 'subcategory', 'user_name', 'target_user', 'process_name'];
-    const chips = drillFields.filter((field) => row[field]).map((field) => `<button type="button" class="chip" data-drill="${escapeHtml(field)} = '${escapeHtml(String(row[field]).replace(/'/g, \"''\"))}'">${escapeHtml(field)}: ${escapeHtml(row[field])}</button>`).join('');
+    const chips = drillFields.filter((field) => row[field]).map((field) => {
+        const rawValue = String(row[field] ?? '');
+        const drillValue = rawValue.replace(/'/g, "''");
+        const drillExpr = `${field} = '${drillValue}'`;
+        return `<button type="button" class="chip" data-drill="${escapeHtml(drillExpr)}">${escapeHtml(field)}: ${escapeHtml(rawValue)}</button>`;
+    }).join('');
     const details = Object.entries(row).map(([key, value]) => {
         let formatted = value;
         if (key === 'ts') formatted = formatDisplayTimestamp(value);

@@ -17,7 +17,7 @@ log_source = '192.168.1.39' AND severity IN ('high', 'critical')
 SELECT ts, log_source, severity, user_name, process_command FROM events_view WHERE src_ip = '10.0.0.1' ORDER BY ts DESC LIMIT 50</div></div></section>
 </div>
 <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Retention and cold storage</h3><p class="panel-subtitle">Manual archive action for the lab deployment. Rows older than the chosen hot window are copied into <span class="mono">siem.events_cold</span> and removed from hot storage.</p></div></div><div class="panel-body"><div class="grid-2"><div><label class="hint" for="archiveHours">Archive events older than</label><input id="archiveHours" class="field" type="number" min="1" value="{{ overview.hot_retention_hours or 168 }}"></div><div style="display:flex; align-items:end; gap:12px;"><button id="archiveHotBtn" type="button" class="btn primary" {% if user.role != 'admin' %}disabled{% endif %}>Archive hot -> cold</button><div class="page-note">{% if user.role == 'admin' %}Admin only action{% else %}Current role is read-only{% endif %}</div></div></div><div id="archiveOutput" class="sql-box mono" style="margin-top:16px;">Archive helper is ready. No action has been executed yet.</div></div></section>
-<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top reporting sources</h3><p class="panel-subtitle">Current activity snapshot from the last 24 hours.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Source</th><th>Events</th><th>Last seen</th><th>High + critical</th></tr></thead><tbody>{% for source in sources %}<tr><td class="mono">{{ source.log_source }}</td><td>{{ source.events }}</td><td>{{ source.last_seen }}</td><td>{{ source.high_count + source.critical_count }}</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top reporting sources</h3><p class="panel-subtitle">Current activity snapshot from the last 24 hours.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Source</th><th>Events</th><th>Last seen</th></tr></thead><tbody>{% for source in sources %}<tr><td class="mono">{{ source.log_source }}</td><td>{{ source.events }}</td><td data-ts="{{ source.last_seen }}">{{ source.last_seen }}</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}
 {% block extra_scripts %}
 <script>
@@ -43,5 +43,6 @@ if (archiveHotBtn) {
         }
     });
 }
+applyTimestampFormatting(document);
 </script>
 {% endblock %}
