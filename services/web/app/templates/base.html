@@ -3,13 +3,13 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>{% block title %}SIEM Console{% endblock %}</title>
+    <title>{% block title %}Rdegon SIEM{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
     <style>
-        :root { --bg: #eef1f5; --panel: #ffffff; --panel-alt: #f7f8fb; --border: #d7dde7; --text: #182230; --muted: #667588; --nav-bg: #15181d; --nav-border: rgba(255,255,255,.08); --nav-text: #f6f8fb; --nav-muted: #aeb8c6; --accent: #1f7ae0; --critical: #d94b4b; --high: #f08b37; --medium: #d8b232; --low: #2aa56b; --info: #477ed8; --shadow: 0 16px 38px rgba(14, 22, 34, .08); }
+        :root { --bg: #eef1f5; --panel: #ffffff; --panel-alt: #f7f8fb; --border: #d7dde7; --text: #182230; --muted: #667588; --nav-border: rgba(255,255,255,.08); --nav-text: #f6f8fb; --nav-muted: #aeb8c6; --accent: #1f7ae0; --critical: #d94b4b; --high: #f08b37; --medium: #d8b232; --low: #2aa56b; --info: #477ed8; --shadow: 0 16px 38px rgba(14, 22, 34, .08); }
         * { box-sizing: border-box; }
         html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: "IBM Plex Sans", sans-serif; }
         body { min-height: 100vh; }
@@ -34,11 +34,6 @@
         .badge { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 3px 10px; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; background: var(--panel-alt); border: 1px solid var(--border); }
         .badge.live { background: rgba(33,201,151,.14); border-color: rgba(33,201,151,.25); color: #176b4d; }
         .badge.sql { background: rgba(31,122,224,.12); border-color: rgba(31,122,224,.22); color: #1f4c8a; }
-        .badge.critical { background: rgba(217,75,75,.12); border-color: rgba(217,75,75,.22); color: var(--critical); }
-        .badge.high { background: rgba(240,139,55,.13); border-color: rgba(240,139,55,.24); color: var(--high); }
-        .badge.medium { background: rgba(216,178,50,.13); border-color: rgba(216,178,50,.22); color: #8f7418; }
-        .badge.low { background: rgba(42,165,107,.12); border-color: rgba(42,165,107,.22); color: var(--low); }
-        .badge.info { background: rgba(71,126,216,.12); border-color: rgba(71,126,216,.22); color: var(--info); }
         .main { padding: 28px 30px 36px; display: flex; flex-direction: column; gap: 20px; }
         .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
         .page-heading h2 { margin: 0 0 8px; font: 700 34px/1 "Space Grotesk", sans-serif; letter-spacing: -.04em; }
@@ -48,7 +43,6 @@
         .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 0 16px; font-weight: 600; cursor: pointer; }
         .btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
         .btn.ghost { background: var(--panel); }
-        .btn.link { background: transparent; border-color: transparent; color: var(--accent); }
         .field, .select { min-height: 42px; width: 100%; padding: 10px 12px; }
         .textarea { width: 100%; min-height: 112px; padding: 12px 14px; resize: vertical; }
         .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow); }
@@ -76,7 +70,7 @@
         .mono, code, pre { font-family: "IBM Plex Mono", monospace; }
         .severity { display: inline-flex; align-items: center; gap: 8px; text-transform: uppercase; font: 600 11px "IBM Plex Mono", monospace; letter-spacing: .08em; }
         .severity::before { content: ''; width: 9px; height: 9px; border-radius: 999px; background: currentColor; }
-        .sev-critical { color: var(--critical); } .sev-high { color: var(--high); } .sev-medium { color: #a88300; } .sev-low { color: var(--low); } .sev-info, .sev-unknown { color: var(--info); }
+        .sev-critical { color: #d94b4b; } .sev-high { color: #f08b37; } .sev-medium { color: #a88300; } .sev-low { color: #2aa56b; } .sev-info, .sev-unknown { color: #477ed8; }
         .chart-bars { display: flex; align-items: end; gap: 10px; min-height: 220px; }
         .chart-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: end; gap: 8px; }
         .chart-bar { border-radius: 10px 10px 4px 4px; background: linear-gradient(180deg, #9ac3ef, #d4e3f6); min-height: 10px; }
@@ -94,7 +88,7 @@
         .kv-key { color: var(--muted); }
         .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
         .chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; border: 1px solid var(--border); background: #f7f9fc; color: var(--text); padding: 7px 11px; font-size: 12px; cursor: pointer; }
-        .error-box { padding: 14px 16px; border-radius: 14px; border: 1px solid rgba(217,75,75,.25); background: rgba(217,75,75,.08); color: var(--critical); }
+        .error-box { padding: 14px 16px; border-radius: 14px; border: 1px solid rgba(217,75,75,.25); background: rgba(217,75,75,.08); color: #d94b4b; }
         .empty-box { padding: 24px; color: var(--muted); text-align: center; }
         .donut-wrap { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 16px; align-items: center; }
         .donut { width: 170px; height: 170px; border-radius: 50%; border: 18px solid #edf2f7; position: relative; }
@@ -115,9 +109,9 @@
 <div class="layout">
     <aside class="sidebar">
         <div class="brand">
-            <div class="brand-mark">S</div>
-            <h1>Unified Monitoring and Analysis Platform</h1>
-            <p>Lab SIEM console for the four-node deployment. ClickHouse-backed search, incidents, assets, and platform telemetry in one view.</p>
+            <div class="brand-mark">R</div>
+            <h1>Rdegon SIEM</h1>
+            <p>Rdegon SIEM control plane for the four-node lab deployment. ClickHouse-backed search, incidents, assets, and platform telemetry in one view.</p>
         </div>
         <div>
             <div class="nav-title">Navigation</div>
@@ -142,7 +136,7 @@
     <main class="main">
         <div class="topbar">
             <div class="page-heading">
-                <h2>{% block page_title %}SIEM Console{% endblock %}</h2>
+                <h2>{% block page_title %}Rdegon SIEM{% endblock %}</h2>
                 <p>{% block page_subtitle %}Operational monitoring and investigation console{% endblock %}</p>
             </div>
             <div class="top-actions">
@@ -158,8 +152,7 @@
 <script>
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, function(char) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char]; }); }
 function severityClass(value) { const sev = String(value || 'info').toLowerCase(); return ['critical', 'high', 'medium', 'low', 'info'].includes(sev) ? 'sev-' + sev : 'sev-info'; }
-function downloadTsv(filename, headers, rows) { const lines = [headers.join('	')].concat(rows.map((row) => headers.map((key) => String(row[key] ?? '')).join('	'))); const blob = new Blob([lines.join('
-')], { type: 'text/tab-separated-values;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); URL.revokeObjectURL(link.href); }
+function downloadTsv(filename, headers, rows) { const lines = [headers.join('\t')].concat(rows.map((row) => headers.map((key) => String(row[key] ?? '')).join('\t'))); const blob = new Blob([lines.join('\n')], { type: 'text/tab-separated-values;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); URL.revokeObjectURL(link.href); }
 function renderDonut(elementId, totalElementId, rows) { const container = document.getElementById(elementId); const total = rows.reduce((sum, row) => sum + Number(row.count || row.cnt || 0), 0); const totalNode = document.getElementById(totalElementId); if (totalNode) totalNode.textContent = total; if (!container || total === 0) { if (container) container.style.background = '#edf2f7'; return; } let offset = 0; const colors = ['#1f7ae0', '#21c997', '#f08b37', '#d94b4b', '#6b7f94', '#8e63d3']; const segments = rows.map((row, index) => { const value = Number(row.count || row.cnt || 0); const percent = total ? (value / total) * 100 : 0; const color = colors[index % colors.length]; const start = offset; offset += percent; row.__color = color; return `${color} ${start}% ${offset}%`; }); container.style.background = `conic-gradient(${segments.join(', ')})`; }
 </script>
 {% block extra_scripts %}{% endblock %}
