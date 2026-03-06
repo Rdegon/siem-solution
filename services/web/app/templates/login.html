@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>SIEM Console Login</title>
+    <title>Rdegon SIEM Login</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,8 +21,8 @@
 </head>
 <body>
     <div class="card">
-        <h1>SIEM Console</h1>
-        <p>Interactive lab console for the 4-VM SIEM deployment. Sign in to review dashboards, events, alerts, assets, and resources.</p>
+        <h1>Rdegon SIEM</h1>
+        <p>Interactive lab console for the 4-VM deployment. Sign in to review dashboards, events, incidents, assets, and resources.</p>
         {% if error %}<div class="error">{{ error }}</div>{% endif %}
         <form method="post" action="/auth/login">
             <label for="username">Username</label>

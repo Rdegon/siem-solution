@@ -1,9 +1,10 @@
 
 {% extends "base.html" %}
-{% block title %}Dashboard{% endblock %}
-{% block page_title %}Monitoring Dashboard{% endblock %}
-{% block page_subtitle %}Operational picture of events, incidents, and monitored sources across the SIEM lab deployment.{% endblock %}
+{% block title %}Dashboards | Rdegon SIEM{% endblock %}
+{% block page_title %}Security Dashboard{% endblock %}
+{% block page_subtitle %}Operational picture of events, incidents, and monitored sources across the Rdegon SIEM lab deployment.{% endblock %}
 {% block content %}
+<div class="view-stack">
 <div class="grid-4">
     <section class="kpi"><p class="kpi-label">Open incidents</p><div class="kpi-value">{{ metrics.open_incidents_24h or 0 }}</div><div class="kpi-meta">Aggregated incidents still not closed during the last 24 hours.</div></section>
     <section class="kpi"><p class="kpi-label">New alerts</p><div class="kpi-value">{{ metrics.new_alerts_24h or 0 }}</div><div class="kpi-meta">Fresh raw alerts waiting for initial triage.</div></section>
@@ -28,6 +29,7 @@
 <div class="grid-2">
     <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top sources</h3><p class="panel-subtitle">Most active monitored sources during the last 24 hours.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Source</th><th>Events</th><th>Last seen</th><th>High + critical</th></tr></thead><tbody>{% for source in top_sources %}<tr><td class="mono">{{ source.log_source }}</td><td>{{ source.events }}</td><td>{{ source.last_seen }}</td><td>{{ source.high_count + source.critical_count }}</td></tr>{% endfor %}</tbody></table></div></section>
     <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top categories</h3><p class="panel-subtitle">Most frequent normalized categories in the event stream.</p></div></div><div class="panel-body"><div class="mini-list">{% set max_events = (top_categories[0].events if top_categories else 1) %}{% for row in top_categories %}<div class="mini-row"><div><div style="font-weight:600;">{{ row.category }}</div><div class="page-note">{{ row.events }} events</div></div><div style="width:160px;"><div class="mini-bar-track"><div class="mini-bar" style="width: {{ (row.events / max_events * 100) if max_events else 0 }}%;"></div></div></div></div>{% endfor %}</div></div></section>
+</div>
 </div>
 {% endblock %}
 {% block extra_scripts %}
