@@ -6,8 +6,10 @@ from datetime import datetime
 from functools import lru_cache
 import re
 from typing import Any, Dict, List
+from urllib.parse import quote
 
 import clickhouse_connect
+import yaml
 
 from .config import CONFIG
 
@@ -66,6 +68,8 @@ FULL_SQL_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 LIMIT_RE = re.compile(r"\blimit\s+(\d+)\b", re.IGNORECASE)
 EVENT_VIEW_FROM_RE = re.compile(r"\b(from|join)\s+events_view\b", re.IGNORECASE)
 EVENT_TABLE_FROM_RE = re.compile(r"\b(from|join)\s+siem\.events\b", re.IGNORECASE)
+SIGMA_CONDITION_TOKEN_RE = re.compile(r"\(|\)|\b(?:and|or|not)\b|[A-Za-z0-9_*]+", re.IGNORECASE)
+DETECTION_RULE_TABLE = "siem.detection_rule_catalog"
 
 
 @lru_cache(maxsize=1)
@@ -526,6 +530,7 @@ def fetch_assets(limit: int = 50, hours: int = 24) -> List[Dict[str, Any]]:
 
 
 def fetch_resource_overview() -> Dict[str, Any]:
+    ensure_detection_support_tables()
     return {
         'clickhouse_ok': ch_ping(),
         'events_total': int(_scalar("SELECT count() FROM siem.events")),
@@ -534,5 +539,768 @@ def fetch_resource_overview() -> Dict[str, Any]:
         'normalizer_rules': int(_scalar("SELECT count() FROM siem.normalizer_rules WHERE enabled = 1")),
         'filter_rules': int(_scalar("SELECT count() FROM siem.filter_rules WHERE enabled = 1")),
         'stream_rules': int(_scalar("SELECT count() FROM siem.correlation_rules_stream WHERE enabled = 1")),
+        'detection_rules': int(_scalar(f"SELECT count() FROM {DETECTION_RULE_TABLE}")),
         'last_event_ts': _fmt(_scalar("SELECT max(ts) FROM siem.events")),
     }
+
+
+DEFAULT_SIGMA_RULES = [
+    {
+        "id": 1001,
+        "title": "Linux SSH Brute Force Burst",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 5,
+        "entity_field": "source.ip",
+        "yaml": """
+title: Linux SSH Brute Force Burst
+id: sigma-linux-ssh-bruteforce-burst
+status: experimental
+logsource:
+  product: linux
+  service: sshd
+detection:
+  selection:
+    event.provider: linux.sshd
+    event.type: ssh_login_failure
+  condition: selection
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1110
+""".strip(),
+    },
+    {
+        "id": 1002,
+        "title": "Linux Audit USER_LOGIN Failures",
+        "level": "medium",
+        "window_s": 300,
+        "threshold": 3,
+        "entity_field": "source.ip",
+        "yaml": """
+title: Linux Audit USER_LOGIN Failures
+id: sigma-linux-audit-user-login-failure
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: audit_user_login_failure
+  condition: selection
+level: medium
+tags:
+  - attack.credential_access
+  - attack.t1078
+""".strip(),
+    },
+    {
+        "id": 1003,
+        "title": "Linux Sudo To Root",
+        "level": "medium",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "user.name",
+        "yaml": """
+title: Linux Sudo To Root
+id: sigma-linux-sudo-to-root
+status: experimental
+logsource:
+  product: linux
+  service: sudo
+detection:
+  selection:
+    event.provider: linux.sudo
+    event.type: sudo_command
+    user.target.name: root
+  condition: selection
+level: medium
+tags:
+  - attack.privilege_escalation
+  - attack.t1548
+""".strip(),
+    },
+    {
+        "id": 1004,
+        "title": "Linux Exec As Root Burst",
+        "level": "high",
+        "window_s": 600,
+        "threshold": 3,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Exec As Root Burst
+id: sigma-linux-exec-as-root-burst
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: audit_exec_as_root
+  condition: selection
+level: high
+tags:
+  - attack.privilege_escalation
+  - attack.execution
+""".strip(),
+    },
+    {
+        "id": 1005,
+        "title": "Linux Root SSH Login Success",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "source.ip",
+        "yaml": """
+title: Linux Root SSH Login Success
+id: sigma-linux-root-ssh-login-success
+status: experimental
+logsource:
+  product: linux
+  service: sshd
+detection:
+  selection:
+    event.provider: linux.sshd
+    event.type: ssh_login_success
+    user.name: root
+  condition: selection
+level: high
+tags:
+  - attack.initial_access
+  - attack.t1078
+""".strip(),
+    },
+    {
+        "id": 1006,
+        "title": "Linux Suspicious Download Utility",
+        "level": "medium",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Suspicious Download Utility
+id: sigma-linux-suspicious-download-utility
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection_curl:
+    event.provider: linux.auditd
+    event.type: audit_execve
+    process.command_line|contains: curl
+  selection_wget:
+    event.provider: linux.auditd
+    event.type: audit_execve
+    process.command_line|contains: wget
+  condition: 1 of selection_*
+level: medium
+tags:
+  - attack.command_and_control
+  - attack.t1105
+""".strip(),
+    },
+    {
+        "id": 1007,
+        "title": "Linux Netcat Execution",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Netcat Execution
+id: sigma-linux-netcat-execution
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection_nc:
+    event.provider: linux.auditd
+    event.type: audit_execve
+    process.command_line|contains: nc
+  selection_ncat:
+    event.provider: linux.auditd
+    event.type: audit_execve
+    process.command_line|contains: ncat
+  condition: 1 of selection_*
+level: high
+tags:
+  - attack.command_and_control
+  - attack.t1095
+""".strip(),
+    },
+    {
+        "id": 1008,
+        "title": "Linux Sudo Root Session Opened",
+        "level": "medium",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "user.target.name",
+        "yaml": """
+title: Linux Sudo Root Session Opened
+id: sigma-linux-sudo-root-session-opened
+status: experimental
+logsource:
+  product: linux
+  service: sudo
+detection:
+  selection:
+    event.provider: linux.sudo
+    event.type: sudo_session_opened
+    user.target.name: root
+  condition: selection
+level: medium
+tags:
+  - attack.privilege_escalation
+  - attack.t1548
+""".strip(),
+    },
+]
+
+
+def ensure_detection_support_tables() -> None:
+    get_ch_client().command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {DETECTION_RULE_TABLE}
+        (
+            id UInt32,
+            title String,
+            sigma_id String,
+            status LowCardinality(String),
+            level LowCardinality(String),
+            source_format LowCardinality(String),
+            logsource_product String,
+            logsource_service String,
+            logsource_category String,
+            sigma_yaml String,
+            expr String,
+            entity_field String,
+            window_s UInt32,
+            threshold UInt32,
+            verification_query String,
+            tags String,
+            description String,
+            enabled UInt8,
+            author String,
+            created_ts DateTime DEFAULT now(),
+            updated_ts DateTime DEFAULT now()
+        )
+        ENGINE = MergeTree
+        ORDER BY (id)
+        """
+    )
+    _seed_default_sigma_rules()
+
+
+def _map_sigma_field(field_name: str, *, target: str = "stream") -> tuple[str, str]:
+    parts = field_name.split("|")
+    field = parts[0].strip()
+    modifier = parts[1].strip().lower() if len(parts) > 1 else "eq"
+    field_key = field.lower()
+    if target == "events":
+        field_map = {
+            "message": ("message", "contains"),
+            "event.original": ("message", "contains"),
+            "event.provider": ("device_product", "eq"),
+            "event.category": ("category", "eq"),
+            "event.type": ("subcategory", "eq"),
+            "logsource": ("log_source", "eq"),
+            "log_source": ("log_source", "eq"),
+            "severity": ("severity", "eq"),
+            "sourceip": ("src_ip", "eq"),
+            "source.ip": ("src_ip", "eq"),
+            "clientaddress": ("src_ip", "eq"),
+            "ipaddress": ("src_ip", "eq"),
+            "host": ("log_source", "eq"),
+            "host.name": ("log_source", "eq"),
+            "user": ("message", "contains"),
+            "username": ("message", "contains"),
+            "accountname": ("message", "contains"),
+            "user.name": ("message", "contains"),
+            "targetuser": ("message", "contains"),
+            "targetusername": ("message", "contains"),
+            "user.target.name": ("message", "contains"),
+            "commandline": ("message", "contains"),
+            "process.command_line": ("message", "contains"),
+            "image": ("message", "contains"),
+            "process.executable": ("message", "contains"),
+        }
+        normalized, default_modifier = field_map.get(field_key, ("message", "contains"))
+        effective_modifier = modifier if modifier != "eq" else default_modifier
+    else:
+        field_map = {
+            "message": "event.original",
+            "event.original": "event.original",
+            "event.provider": "event.provider",
+            "event.category": "event.category",
+            "event.type": "event.type",
+            "event.action": "event.action",
+            "event.outcome": "event.outcome",
+            "commandline": "process.command_line",
+            "process.command_line": "process.command_line",
+            "image": "process.executable",
+            "process.executable": "process.executable",
+            "user": "user.name",
+            "username": "user.name",
+            "accountname": "user.name",
+            "user.name": "user.name",
+            "targetuser": "user.target.name",
+            "targetusername": "user.target.name",
+            "user.target.name": "user.target.name",
+            "sourceip": "source.ip",
+            "source.ip": "source.ip",
+            "clientaddress": "source.ip",
+            "ipaddress": "source.ip",
+            "host": "host.name",
+            "host.name": "host.name",
+        }
+        normalized = field_map.get(field_key, field)
+        effective_modifier = modifier
+    op_map = {
+        "eq": "==",
+        "contains": "icontains",
+        "startswith": "startswith",
+        "endswith": "endswith",
+    }
+    return normalized, op_map.get(effective_modifier, "==")
+
+
+def _stream_expr(field: str, op: str, value: Any) -> str:
+    escaped = str(value).replace("\\", "\\\\").replace("'", "\\'")
+    return f"{field} {op} '{escaped}'"
+
+
+def _verification_expr(field: str, op: str, value: Any) -> str:
+    escaped = str(value).replace("\\", "\\\\").replace("'", "''")
+    haystack = f"toString({field})"
+    if op == "==":
+        return f"{haystack} = '{escaped}'"
+    if op == "!=":
+        return f"{haystack} != '{escaped}'"
+    if op == "icontains":
+        return f"positionCaseInsensitiveUTF8({haystack}, '{escaped}') > 0"
+    if op == "startswith":
+        return f"positionCaseInsensitiveUTF8({haystack}, '{escaped}') = 1"
+    if op == "endswith":
+        return f"endsWith(lowerUTF8({haystack}), lowerUTF8('{escaped}'))"
+    return f"positionCaseInsensitiveUTF8({haystack}, '{escaped}') > 0"
+
+
+def _selection_to_expr(selection: Dict[str, Any], *, target: str) -> str:
+    chunks: List[str] = []
+    for raw_field, raw_value in selection.items():
+        if raw_field == "keywords":
+            values = raw_value if isinstance(raw_value, list) else [raw_value]
+            builder = _stream_expr if target == "stream" else _verification_expr
+            keyword_field = "event.original" if target == "stream" else "message"
+            keyword_exprs = [builder(keyword_field, "icontains", item) for item in values]
+            chunks.append("(" + " or ".join(keyword_exprs) + ")")
+            continue
+        field, op = _map_sigma_field(raw_field, target=target)
+        values = raw_value if isinstance(raw_value, list) else [raw_value]
+        builder = _stream_expr if target == "stream" else _verification_expr
+        exprs = [builder(field, op, item) for item in values]
+        chunks.append("(" + " or ".join(exprs) + ")" if len(exprs) > 1 else exprs[0])
+    fallback = "event.provider != 'unknown'" if target == "stream" else "device_product != ''"
+    return " and ".join(chunks) if chunks else fallback
+
+
+def _compile_sigma_condition(condition: str, selections: Dict[str, str]) -> str:
+    compact = " ".join(condition.strip().split())
+    special = re.fullmatch(r"(1|all) of ([A-Za-z0-9_*]+)", compact, flags=re.IGNORECASE)
+    if special:
+        mode, pattern = special.groups()
+        prefix = pattern[:-1] if pattern.endswith("*") else pattern
+        matched = [expr for key, expr in selections.items() if key.startswith(prefix)]
+        if not matched:
+            raise ValueError("Sigma condition does not match any selection blocks")
+        joiner = " or " if mode.lower() == "1" else " and "
+        return "(" + joiner.join(matched) + ")"
+
+    tokens = SIGMA_CONDITION_TOKEN_RE.findall(compact)
+    pos = 0
+
+    def parse_primary() -> str:
+        nonlocal pos
+        token = tokens[pos]
+        lowered = token.lower()
+        if token == "(":
+            pos += 1
+            inner = parse_or()
+            if pos >= len(tokens) or tokens[pos] != ")":
+                raise ValueError("Unclosed Sigma condition group")
+            pos += 1
+            return f"({inner})"
+        if lowered == "not":
+            raise ValueError("Sigma 'not' conditions are not supported in the current converter")
+        if token not in selections:
+            raise ValueError(f"Unsupported Sigma condition token: {token}")
+        pos += 1
+        return f"({selections[token]})"
+
+    def parse_and() -> str:
+        nonlocal pos
+        left = parse_primary()
+        while pos < len(tokens) and tokens[pos].lower() == "and":
+            pos += 1
+            left = f"({left} and {parse_primary()})"
+        return left
+
+    def parse_or() -> str:
+        nonlocal pos
+        left = parse_and()
+        while pos < len(tokens) and tokens[pos].lower() == "or":
+            pos += 1
+            left = f"({left} or {parse_and()})"
+        return left
+
+    compiled = parse_or()
+    if pos != len(tokens):
+        raise ValueError("Unexpected tokens in Sigma condition")
+    return compiled
+
+
+def convert_sigma_to_stream_rule(
+    sigma_yaml: str,
+    *,
+    threshold: int,
+    window_s: int,
+    entity_field: str,
+    rule_id: int | None = None,
+) -> Dict[str, Any]:
+    document = yaml.safe_load(sigma_yaml) or {}
+    if not isinstance(document, dict):
+        raise ValueError("Sigma payload must be a YAML object")
+    detection = document.get("detection")
+    if not isinstance(detection, dict):
+        raise ValueError("Sigma rule must contain detection")
+    condition = str(detection.get("condition", "")).strip()
+    if not condition:
+        raise ValueError("Sigma detection.condition is required")
+
+    selection_exprs: Dict[str, str] = {}
+    verification_exprs: Dict[str, str] = {}
+    for key, value in detection.items():
+        if key == "condition":
+            continue
+        if not isinstance(value, dict):
+            raise ValueError(f"Sigma selection '{key}' must be an object")
+        selection_exprs[key] = _selection_to_expr(value, target="stream")
+        verification_exprs[key] = _selection_to_expr(value, target="events")
+
+    expr = _compile_sigma_condition(condition, selection_exprs)
+    verification_query = _compile_sigma_condition(condition, verification_exprs)
+    level = str(document.get("level", "medium") or "medium").lower()
+    logsource = document.get("logsource") or {}
+    if not isinstance(logsource, dict):
+        logsource = {}
+    title = str(document.get("title", "Untitled Sigma rule") or "Untitled Sigma rule").strip()
+    description = str(document.get("description", "") or "").strip()
+    sigma_id = str(document.get("id", "") or "").strip()
+    tags = document.get("tags") or []
+    if not isinstance(tags, list):
+        tags = [str(tags)]
+    return {
+        "id": int(rule_id) if rule_id is not None else 0,
+        "title": title,
+        "sigma_id": sigma_id,
+        "status": str(document.get("status", "custom") or "custom"),
+        "level": level,
+        "source_format": "sigma",
+        "logsource_product": str(logsource.get("product", "") or ""),
+        "logsource_service": str(logsource.get("service", "") or ""),
+        "logsource_category": str(logsource.get("category", "") or ""),
+        "sigma_yaml": sigma_yaml.strip(),
+        "expr": expr,
+        "entity_field": entity_field,
+        "window_s": int(window_s),
+        "threshold": int(threshold),
+        "verification_query": verification_query,
+        "tags": ",".join(str(tag) for tag in tags),
+        "description": description,
+        "enabled": 1,
+        "author": "web",
+    }
+
+
+def _next_detection_rule_id() -> int:
+    current_catalog = int(_scalar(f"SELECT max(id) FROM {DETECTION_RULE_TABLE}"))
+    current_stream = int(_scalar("SELECT max(id) FROM siem.correlation_rules_stream"))
+    return max(current_catalog, current_stream, 1999) + 1
+
+
+def _seed_default_sigma_rules() -> None:
+    existing_ids = {
+        int(row[0])
+        for row in get_ch_client().query(f"SELECT id FROM {DETECTION_RULE_TABLE}").result_rows
+    }
+    missing_rules = [
+        convert_sigma_to_stream_rule(
+            item["yaml"],
+            threshold=item["threshold"],
+            window_s=item["window_s"],
+            entity_field=item["entity_field"],
+            rule_id=item["id"],
+        )
+        for item in DEFAULT_SIGMA_RULES
+        if int(item["id"]) not in existing_ids
+    ]
+    if not missing_rules:
+        return
+    _insert_detection_rule_rows(missing_rules, sync_stream=False)
+    for rule in missing_rules:
+        _insert_stream_rule(rule)
+
+
+def _insert_detection_rule_rows(rules: List[Dict[str, Any]], *, sync_stream: bool) -> None:
+    rows = [
+        [
+            int(rule["id"]),
+            rule["title"],
+            rule["sigma_id"],
+            rule["status"],
+            rule["level"],
+            rule["source_format"],
+            rule["logsource_product"],
+            rule["logsource_service"],
+            rule["logsource_category"],
+            rule["sigma_yaml"],
+            rule["expr"],
+            rule["entity_field"],
+            int(rule["window_s"]),
+            int(rule["threshold"]),
+            rule["verification_query"],
+            rule["tags"],
+            rule["description"],
+            int(rule["enabled"]),
+            rule["author"],
+        ]
+        for rule in rules
+    ]
+    get_ch_client().insert(
+        DETECTION_RULE_TABLE,
+        rows,
+        column_names=[
+            "id",
+            "title",
+            "sigma_id",
+            "status",
+            "level",
+            "source_format",
+            "logsource_product",
+            "logsource_service",
+            "logsource_category",
+            "sigma_yaml",
+            "expr",
+            "entity_field",
+            "window_s",
+            "threshold",
+            "verification_query",
+            "tags",
+            "description",
+            "enabled",
+            "author",
+        ],
+    )
+    if sync_stream:
+        for rule in rules:
+            _insert_stream_rule(rule)
+
+
+def _insert_stream_rule(rule: Dict[str, Any]) -> None:
+    get_ch_client().command(f"ALTER TABLE siem.correlation_rules_stream DELETE WHERE id = {int(rule['id'])}")
+    get_ch_client().insert(
+        "siem.correlation_rules_stream",
+        [[
+            int(rule["id"]),
+            rule["title"],
+            rule["description"] or f"Sigma-derived rule for {rule['title']}",
+            1,
+            rule["level"],
+            "threshold",
+            int(rule["window_s"]),
+            int(rule["threshold"]),
+            rule["expr"],
+            rule["entity_field"],
+        ]],
+        column_names=[
+            "id",
+            "name",
+            "description",
+            "enabled",
+            "severity",
+            "pattern",
+            "window_s",
+            "threshold",
+            "expr",
+            "entity_field",
+        ],
+    )
+
+
+def save_sigma_rule(
+    sigma_yaml: str,
+    *,
+    threshold: int,
+    window_s: int,
+    entity_field: str,
+    author: str = "web",
+) -> Dict[str, Any]:
+    ensure_detection_support_tables()
+    rule = convert_sigma_to_stream_rule(
+        sigma_yaml,
+        threshold=threshold,
+        window_s=window_s,
+        entity_field=entity_field,
+        rule_id=_next_detection_rule_id(),
+    )
+    rule["author"] = author
+    _insert_detection_rule_rows([rule], sync_stream=True)
+    return rule
+
+
+def _count_rule_matches(query_text: str, window: str = "24h") -> int:
+    expression = _validate_read_only_sql(str(query_text or "").strip())
+    result = get_ch_client().query(
+        f"""
+        SELECT count() AS cnt
+        FROM ({EVENT_VIEW_SQL}) AS events_view
+        WHERE {_event_time_filter(window)}
+          AND ({expression})
+        """
+    )
+    return int(result.result_rows[0][0]) if result.result_rows else 0
+
+
+def fetch_detection_rules(limit: int = 100) -> List[Dict[str, Any]]:
+    ensure_detection_support_tables()
+    query = f"""
+        SELECT
+            id,
+            title,
+            sigma_id,
+            status,
+            level,
+            source_format,
+            logsource_product,
+            logsource_service,
+            logsource_category,
+            expr,
+            entity_field,
+            window_s,
+            threshold,
+            verification_query,
+            tags,
+            description,
+            enabled,
+            author,
+            created_ts,
+            updated_ts
+        FROM {DETECTION_RULE_TABLE}
+        ORDER BY updated_ts DESC, id DESC
+        LIMIT {int(limit)}
+    """
+    rules: List[Dict[str, Any]] = []
+    alert_rows = get_ch_client().query(
+        f"""
+        SELECT rule_id, count() AS hits, max(ts_last) AS last_alert
+        FROM siem.alerts_raw
+        GROUP BY rule_id
+        """
+    ).result_rows
+    alert_index = {int(rule_id): {"hits": int(hits), "last_alert": _fmt(last_alert)} for rule_id, hits, last_alert in alert_rows}
+    for row in get_ch_client().query(query).named_results():
+        verification_query = str(row["verification_query"] or "")
+        match_hits_24h = _count_rule_matches(verification_query, window="24h") if verification_query else 0
+        record = {
+            "id": int(row["id"]),
+            "title": row["title"],
+            "sigma_id": row["sigma_id"],
+            "status": row["status"],
+            "level": str(row["level"]).lower(),
+            "source_format": row["source_format"],
+            "logsource_product": row["logsource_product"],
+            "logsource_service": row["logsource_service"],
+            "logsource_category": row["logsource_category"],
+            "expr": row["expr"],
+            "entity_field": row["entity_field"],
+            "window_s": int(row["window_s"]),
+            "threshold": int(row["threshold"]),
+            "verification_query": verification_query,
+            "tags": [part for part in str(row["tags"] or "").split(",") if part],
+            "description": row["description"],
+            "enabled": bool(row["enabled"]),
+            "author": row["author"],
+            "created_ts": _fmt(row["created_ts"]),
+            "updated_ts": _fmt(row["updated_ts"]),
+            "match_hits_24h": match_hits_24h,
+            "alert_hits_total": alert_index.get(int(row["id"]), {}).get("hits", 0),
+            "last_alert_ts": alert_index.get(int(row["id"]), {}).get("last_alert", ""),
+            "events_link": f"/events?q={quote(verification_query)}" if verification_query else "/events",
+        }
+        rules.append(record)
+    return rules
+
+
+def test_detection_rule(rule_id: int) -> Dict[str, Any]:
+    ensure_detection_support_tables()
+    result = get_ch_client().query(
+        f"""
+        SELECT id, title, verification_query
+        FROM {DETECTION_RULE_TABLE}
+        WHERE id = {int(rule_id)}
+        LIMIT 1
+        """
+    )
+    if not result.result_rows:
+        raise ValueError("Rule not found")
+    _, title, verification_query = result.result_rows[0]
+    hits = _count_rule_matches(str(verification_query or ""), window="24h")
+    last_alert = _scalar(f"SELECT max(ts_last) FROM siem.alerts_raw WHERE rule_id = {int(rule_id)}")
+    return {
+        "rule_id": int(rule_id),
+        "title": title,
+        "verification_query": verification_query,
+        "hits_24h": hits,
+        "last_alert_ts": _fmt(last_alert),
+        "events_link": f"/events?q={quote(str(verification_query or ''))}",
+    }
+
+
+def fetch_asset_categories() -> List[Dict[str, Any]]:
+    ensure_detection_support_tables()
+    return [
+        {
+            "name": "Devices",
+            "count": int(_scalar("SELECT countDistinct(log_source) FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR")),
+            "description": "Observed hosts and sources active during the last 24 hours.",
+        },
+        {
+            "name": "Detection Rules",
+            "count": int(_scalar(f"SELECT count() FROM {DETECTION_RULE_TABLE}")),
+            "description": "Rules stored in the web-side catalog and synchronized to stream correlation.",
+        },
+        {
+            "name": "Sigma Rules",
+            "count": int(_scalar(f"SELECT count() FROM {DETECTION_RULE_TABLE} WHERE lower(source_format) = 'sigma'")),
+            "description": "Sigma-oriented rules converted into the SIEM stream rule DSL.",
+        },
+        {
+            "name": "Normalizers",
+            "count": int(_scalar("SELECT count() FROM siem.normalizer_rules WHERE enabled = 1")),
+            "description": "Enabled normalizer rules plus built-in Linux parsing logic.",
+        },
+        {
+            "name": "Active Lists",
+            "count": 0,
+            "description": "Reserved category for stateful lists, allow/deny inventories and watchlists.",
+        },
+        {
+            "name": "Threat Feeds",
+            "count": 0,
+            "description": "Reserved category for TI/CyberTrace and external feed connectors.",
+        },
+    ]

@@ -1,20 +1,17 @@
 """
-/home/siem/siem-solution/services/filter/filter_core.py
+Filtering and matching DSL shared by filter and stream correlation.
 
-Логика фильтра:
-  - Загрузка правил из ClickHouse (siem.filter_rules).
-  - Мини-DSL для expr:
-      expr := cmp (('and' | 'or') cmp)*
-      cmp  := field '==' string_literal | field '!=' string_literal
+Supported comparisons:
+  - field == 'value'
+  - field != 'value'
+  - field contains 'value'
+  - field icontains 'value'
+  - field startswith 'value'
+  - field endswith 'value'
 
-    Примеры:
-      event.provider == 'http_json'
-      event.provider == 'http_json' and event.category == 'test'
-
-  - Действия:
-      pass -> пропускаем событие
-      drop -> отбрасываем
-      tag  -> добавляем теги (строкой в поле 'tags') и пропускаем
+Boolean operators:
+  - and
+  - or
 """
 
 from __future__ import annotations
@@ -115,14 +112,11 @@ def load_filter_rules(settings: FilterSettings) -> List[FilterRule]:
 Token = Tuple[str, str]  # (type, value)
 
 
+COMPARISON_WORDS = {"contains", "icontains", "startswith", "endswith"}
+
+
 def _tokenize(expr: str) -> List[Token]:
-    """
-    Разбивает expr на токены:
-      - NAME: [a-zA-Z0-9_.]+
-      - STRING: '...'
-      - OP: ==, !=
-      - AND, OR
-    """
+    """Split expression into NAME / STRING / OP / AND / OR / LPAREN / RPAREN tokens."""
 
     tokens: List[Token] = []
     i = 0
@@ -157,6 +151,16 @@ def _tokenize(expr: str) -> List[Token]:
             i = j + 1
             continue
 
+        if ch == "(":
+            tokens.append(("LPAREN", ch))
+            i += 1
+            continue
+
+        if ch == ")":
+            tokens.append(("RPAREN", ch))
+            i += 1
+            continue
+
         # Имя / путь: буквы, цифры, _, .
         if re.match(r"[A-Za-z0-9_]", ch):
             j = i + 1
@@ -167,6 +171,8 @@ def _tokenize(expr: str) -> List[Token]:
                 tokens.append(("AND", value))
             elif value == "or":
                 tokens.append(("OR", value))
+            elif value in COMPARISON_WORDS:
+                tokens.append(("OP", value))
             else:
                 tokens.append(("NAME", value))
             i = j
@@ -175,12 +181,6 @@ def _tokenize(expr: str) -> List[Token]:
         raise ValueError(f"Unexpected character in expr: {ch!r} at position {i}")
 
     return tokens
-
-
-# AST представление:
-#   ("cmp", field, op, value)
-#   ("and", left, right)
-#   ("or", left, right)
 
 
 def parse_expr(expr: str) -> Tuple:
@@ -201,27 +201,46 @@ def parse_expr(expr: str) -> Tuple:
 
         if t_field != "NAME":
             raise ValueError("Expected field name in comparison")
-        if t_op != "OP" or op not in ("==", "!="):
-            raise ValueError("Expected == or != in comparison")
+        if t_op != "OP" or op not in ("==", "!=", "contains", "icontains", "startswith", "endswith"):
+            raise ValueError("Expected comparison operator in expression")
         if t_val != "STRING":
             raise ValueError("Expected string literal in comparison")
 
         pos += 3
         return ("cmp", field, op, val)
 
+    def parse_factor() -> Tuple:
+        nonlocal pos
+        if pos >= len(tokens):
+            raise ValueError("Unexpected end of expression")
+        token_type, _ = tokens[pos]
+        if token_type == "LPAREN":
+            pos += 1
+            node = parse_expr_inner()
+            if pos >= len(tokens) or tokens[pos][0] != "RPAREN":
+                raise ValueError("Expected closing parenthesis")
+            pos += 1
+            return node
+        return parse_cmp()
+
+    def parse_and() -> Tuple:
+        nonlocal pos
+        left = parse_factor()
+        while pos < len(tokens) and tokens[pos][0] == "AND":
+            pos += 1
+            right = parse_factor()
+            left = ("and", left, right)
+        return left
+
     def parse_expr_inner() -> Tuple:
         nonlocal pos
-        left = parse_cmp()
+        left = parse_and()
 
         while pos < len(tokens):
             t, v = tokens[pos]
-            if t == "AND":
+            if t == "OR":
                 pos += 1
-                right = parse_cmp()
-                left = ("and", left, right)
-            elif t == "OR":
-                pos += 1
-                right = parse_cmp()
+                right = parse_and()
                 left = ("or", left, right)
             else:
                 break
@@ -242,7 +261,7 @@ def _get_field_value(event: Dict[str, Any], field: str) -> str:
 
 
 def eval_expr(ast: Optional[Tuple], event: Dict[str, Any]) -> bool:
-    """Оценивает AST для события."""
+    """Evaluate parsed expression AST against an event dict."""
     if ast is None:
         return False
 
@@ -255,6 +274,14 @@ def eval_expr(ast: Optional[Tuple], event: Dict[str, Any]) -> bool:
             return actual == val
         if op == "!=":
             return actual != val
+        if op == "contains":
+            return val in actual
+        if op == "icontains":
+            return val.lower() in actual.lower()
+        if op == "startswith":
+            return actual.startswith(val)
+        if op == "endswith":
+            return actual.endswith(val)
         return False
 
     if node_type == "and":
