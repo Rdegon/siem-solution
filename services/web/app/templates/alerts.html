@@ -23,17 +23,18 @@
 const mode = {{ view | tojson }};
 const alertsAgg = {{ alerts_agg | tojson }};
 const alertsRaw = {{ alerts_raw | tojson }};
+const canEditWorkflow = {{ (user.role in ['admin', 'analyst']) | tojson }};
 const rows = mode === 'raw' ? alertsRaw : alertsAgg;
 const alertDrawer = document.getElementById('alertDrawer');
 const rowNodes = Array.from(document.querySelectorAll('#alertsTable tbody tr'));
 let selectedIndex = rows.length ? 0 : null;
 function eventLinkForRow(row) { if (mode === 'raw' && row.source) return `/events?q=${encodeURIComponent(`log_source = '${row.source}'`)}`; if (row.entity_key) return `/events?q=${encodeURIComponent(`log_source = '${row.entity_key}'`)}`; return `/events?q=${encodeURIComponent(`message ILIKE '%${row.rule_name}%'`)}`; }
-async function saveAssignment(row, statusValue, assigneeValue) {
+async function saveAssignment(row, statusValue, assigneeValue, noteValue) {
     const recordId = mode === 'raw' ? row.alert_id : row.agg_id;
     const response = await fetch(`/api/alerts/${mode}/${recordId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: statusValue, assignee: assigneeValue }),
+        body: JSON.stringify({ status: statusValue, assignee: assigneeValue, note: noteValue }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Update failed');
@@ -41,6 +42,29 @@ async function saveAssignment(row, statusValue, assigneeValue) {
     row.assignee = assigneeValue;
     row.updated_ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     activateRow(selectedIndex);
+}
+async function loadHistory(row) {
+    const recordId = mode === 'raw' ? row.alert_id : row.agg_id;
+    const container = document.getElementById('alertHistoryBlock');
+    if (!container) return;
+    try {
+        const response = await fetch(`/api/alerts/${mode}/${recordId}/history`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Unable to load history');
+        const history = payload.history || [];
+        if (!history.length) {
+            container.innerHTML = '<div class="hint">History</div><div class="page-note">No workflow history yet.</div>';
+            return;
+        }
+        container.innerHTML = `<div class="hint">History</div><div class="kv-list">${history.map((entry) => `
+            <div class="kv">
+                <div class="kv-key">${escapeHtml(formatDisplayTimestamp(entry.changed_ts))}</div>
+                <div class="kv-value">${escapeHtml(entry.changed_by)}: ${escapeHtml(entry.previous_status)} -> ${escapeHtml(entry.next_status)}${entry.next_assignee ? `, assignee=${escapeHtml(entry.next_assignee)}` : ''}${entry.note ? `<div class="page-note" style="margin-top:6px;">${escapeHtml(entry.note)}</div>` : ''}</div>
+            </div>
+        `).join('')}</div>`;
+    } catch (error) {
+        container.innerHTML = `<div class="hint">History</div><div class="page-note">${escapeHtml(error.message || String(error))}</div>`;
+    }
 }
 function renderDrawer(row) {
     if (!row) {
@@ -50,12 +74,12 @@ function renderDrawer(row) {
     const contextBlock = mode === 'raw' ? row.context_json : row.group_key_json;
     const samplesBlock = mode === 'agg' ? row.samples_json : '';
     const chips = `<div class="chip-row" style="margin-bottom:14px;"><a class="chip active" href="${eventLinkForRow(row)}">Open related events</a><span class="chip">rule_id: ${escapeHtml(row.rule_id)}</span><span class="chip">status: ${escapeHtml(row.status)}</span>${row.assignee ? `<span class="chip">assignee: ${escapeHtml(row.assignee)}</span>` : ''}</div>`;
-    const lifecycle = `
+    const lifecycle = canEditWorkflow ? `
         <div class="grid-2" style="margin-bottom:14px;">
             <div>
                 <label class="hint" for="statusSelect">Status</label>
                 <select id="statusSelect" class="select">
-                    ${['new', 'assigned', 'in_progress', 'closed'].map((value) => `<option value="${value}" ${row.status === value ? 'selected' : ''}>${value}</option>`).join('')}
+                    ${['open', 'new', 'triaged', 'assigned', 'in_progress', 'closed', 'false_positive', 'reopened'].map((value) => `<option value="${value}" ${row.status === value ? 'selected' : ''}>${value}</option>`).join('')}
                 </select>
             </div>
             <div>
@@ -63,28 +87,36 @@ function renderDrawer(row) {
                 <input id="assigneeInput" class="field" value="${escapeHtml(row.assignee || '')}" placeholder="tier1-analyst">
             </div>
         </div>
+        <div style="margin-bottom:14px;">
+            <label class="hint" for="workflowNoteInput">Workflow note</label>
+            <textarea id="workflowNoteInput" class="textarea" style="min-height:96px;" placeholder="What changed and why?"></textarea>
+        </div>
         <div class="chip-row" style="margin-bottom:14px;">
             <button type="button" class="btn primary" id="saveAlertStateBtn">Save workflow state</button>
         </div>
-    `;
+    ` : `<div class="page-note" style="margin-bottom:14px;">Current role is read-only for incident workflow updates.</div>`;
     const details = Object.entries(row).map(([key, value]) => {
         const formatted = key.includes('ts') ? formatDisplayTimestamp(value) : escapeHtml(value);
         return `<div class="kv"><div class="kv-key">${escapeHtml(key)}</div><div class="kv-value">${formatted}</div></div>`;
     }).join('');
-    alertDrawer.innerHTML = `${chips}${lifecycle}<div class="kv-list">${details}</div>${contextBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(contextBlock)}</div>` : ''}${samplesBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(samplesBlock)}</div>` : ''}`;
-    const saveBtn = document.getElementById('saveAlertStateBtn');
-    saveBtn.addEventListener('click', async () => {
-        const statusValue = document.getElementById('statusSelect').value;
-        const assigneeValue = document.getElementById('assigneeInput').value.trim();
-        saveBtn.disabled = true;
-        try {
-            await saveAssignment(row, statusValue, assigneeValue);
-        } catch (error) {
-            alert(error.message || String(error));
-        } finally {
-            saveBtn.disabled = false;
-        }
-    });
+    alertDrawer.innerHTML = `${chips}${lifecycle}<div class="kv-list">${details}</div><div id="alertHistoryBlock" style="margin-top:14px;"><div class="hint">History</div><div class="page-note">Loading history...</div></div>${contextBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(contextBlock)}</div>` : ''}${samplesBlock ? `<div class="sql-box mono" style="margin-top:14px;">${escapeHtml(samplesBlock)}</div>` : ''}`;
+    loadHistory(row);
+    if (canEditWorkflow) {
+        const saveBtn = document.getElementById('saveAlertStateBtn');
+        saveBtn.addEventListener('click', async () => {
+            const statusValue = document.getElementById('statusSelect').value;
+            const assigneeValue = document.getElementById('assigneeInput').value.trim();
+            const noteValue = document.getElementById('workflowNoteInput').value.trim();
+            saveBtn.disabled = true;
+            try {
+                await saveAssignment(row, statusValue, assigneeValue, noteValue);
+            } catch (error) {
+                alert(error.message || String(error));
+            } finally {
+                saveBtn.disabled = false;
+            }
+        });
+    }
 }
 function activateRow(index) { selectedIndex = index; rowNodes.forEach((node, idx) => node.classList.toggle('active', idx === index)); renderDrawer(rows[index] || null); }
 rowNodes.forEach((node, index) => node.addEventListener('click', () => activateRow(index)));

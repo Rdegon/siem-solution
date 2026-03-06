@@ -24,7 +24,11 @@ EVENT_WINDOWS = {
     '7d': "now() - INTERVAL 7 DAY",
     'all': None,
 }
-EVENT_VIEW_SQL = """
+EVENT_STORAGE_TABLES = {
+    'hot': 'siem.events',
+    'cold': 'siem.events_cold',
+}
+EVENT_BASE_SELECT_SQL = """
     SELECT
         ts,
         event_id,
@@ -49,7 +53,6 @@ EVENT_VIEW_SQL = """
         message,
         normalized_json,
         tags
-    FROM siem.events
 """.strip()
 EVENT_VIEW_COLUMNS = [
     'ts',
@@ -89,6 +92,32 @@ EVENT_TABLE_FROM_RE = re.compile(r"\b(from|join)\s+siem\.events\b", re.IGNORECAS
 SIGMA_CONDITION_TOKEN_RE = re.compile(r"\(|\)|\b(?:and|or|not)\b|[A-Za-z0-9_*]+", re.IGNORECASE)
 DETECTION_RULE_TABLE = "siem.detection_rule_catalog"
 ACTIVE_LIST_TABLE = "siem.active_list_items"
+ALERT_HISTORY_TABLE = "siem.alert_history"
+EVENTS_COLD_TABLE = "siem.events_cold"
+INCIDENT_STATUS_TRANSITIONS = {
+    "new": {"triaged", "assigned", "closed", "false_positive"},
+    "open": {"triaged", "assigned", "in_progress", "closed", "false_positive"},
+    "triaged": {"assigned", "in_progress", "closed", "false_positive"},
+    "assigned": {"in_progress", "closed", "false_positive"},
+    "in_progress": {"closed", "false_positive", "assigned"},
+    "closed": {"reopened"},
+    "false_positive": {"reopened"},
+    "reopened": {"assigned", "in_progress", "closed", "false_positive"},
+}
+
+
+def _event_select_sql(table_name: str) -> str:
+    return f"{EVENT_BASE_SELECT_SQL}\n    FROM {table_name}"
+
+
+def _event_view_sql(storage: str = 'hot') -> str:
+    if storage == 'all':
+        ensure_cold_storage_support()
+        return f"{_event_select_sql('siem.events')} UNION ALL {_event_select_sql(EVENTS_COLD_TABLE)}"
+    table_name = EVENT_STORAGE_TABLES.get(storage, 'siem.events')
+    if storage == 'cold':
+        ensure_cold_storage_support()
+    return _event_select_sql(table_name)
 
 
 @lru_cache(maxsize=1)
@@ -203,12 +232,13 @@ def _ensure_limit(sql: str, limit: int) -> str:
     return LIMIT_RE.sub(f"LIMIT {limit}", sql, count=1)
 
 
-def _resolve_select_query(raw_query: str, limit: int) -> str:
+def _resolve_select_query(raw_query: str, limit: int, storage: str) -> str:
     query = _validate_read_only_sql(raw_query)
+    view_sql = _event_view_sql(storage)
     if 'events_view' in query.lower():
-        resolved = EVENT_VIEW_FROM_RE.sub(rf"\1 ({EVENT_VIEW_SQL}) AS events_view", query)
+        resolved = EVENT_VIEW_FROM_RE.sub(rf"\1 ({view_sql}) AS events_view", query)
     else:
-        resolved = EVENT_TABLE_FROM_RE.sub(rf"\1 ({EVENT_VIEW_SQL}) AS events_view", query)
+        resolved = EVENT_TABLE_FROM_RE.sub(rf"\1 ({view_sql}) AS events_view", query)
     if ' from ' not in resolved.lower():
         raise ValueError('SELECT query must include a FROM clause')
     if resolved == query and 'events_view' not in query.lower() and 'siem.events' not in query.lower():
@@ -216,13 +246,14 @@ def _resolve_select_query(raw_query: str, limit: int) -> str:
     return _ensure_limit(resolved, limit)
 
 
-def _build_events_sql(query_text: str, window: str, limit: int) -> str:
+def _build_events_sql(query_text: str, window: str, limit: int, storage: str = 'hot') -> str:
     limit = max(1, min(limit, EVENT_ROW_LIMIT_MAX))
+    storage = storage if storage in {'hot', 'cold', 'all'} else 'hot'
     query_text = (query_text or '').strip()
     if not query_text:
         expression = '1'
     elif FULL_SQL_RE.match(query_text):
-        return _resolve_select_query(query_text, limit)
+        return _resolve_select_query(query_text, limit, storage)
     elif _looks_like_expression(query_text):
         expression = _validate_read_only_sql(query_text)
     else:
@@ -253,7 +284,7 @@ def _build_events_sql(query_text: str, window: str, limit: int) -> str:
         f"    message,\n"
         f"    normalized_json,\n"
         f"    tags\n"
-        f"FROM ({EVENT_VIEW_SQL}) AS events_view\n"
+        f"FROM ({_event_view_sql(storage)}) AS events_view\n"
         f"WHERE {_event_time_filter(window)}\n"
         f"  AND ({expression})\n"
         f"ORDER BY ts DESC\n"
@@ -303,12 +334,13 @@ def _source_stats(rows: List[Dict[str, Any]], limit: int = 8) -> List[Dict[str, 
     return [{'label': key, 'count': value} for key, value in counts.most_common(limit)]
 
 
-def execute_event_query(query_text: str, window: str = '24h', limit: int = EVENT_ROW_LIMIT_DEFAULT) -> Dict[str, Any]:
-    sql = _build_events_sql(query_text=query_text, window=window, limit=limit)
+def execute_event_query(query_text: str, window: str = '24h', limit: int = EVENT_ROW_LIMIT_DEFAULT, storage: str = 'hot') -> Dict[str, Any]:
+    sql = _build_events_sql(query_text=query_text, window=window, limit=limit, storage=storage)
     result = _rows_from_query(sql)
     rows = result['rows']
     return {
         'sql': sql,
+        'storage': storage,
         'columns': result['columns'],
         'rows': rows,
         'row_count': len(rows),
@@ -575,9 +607,12 @@ def fetch_resource_overview() -> Dict[str, Any]:
     ensure_detection_support_tables()
     ensure_incident_workflow_support()
     ensure_active_list_support()
+    ensure_cold_storage_support()
     return {
         'clickhouse_ok': ch_ping(),
-        'events_total': int(_scalar("SELECT count() FROM siem.events")),
+        'events_total': int(_scalar("SELECT count() FROM siem.events")) + int(_scalar(f"SELECT count() FROM {EVENTS_COLD_TABLE}")),
+        'events_hot_total': int(_scalar("SELECT count() FROM siem.events")),
+        'events_cold_total': int(_scalar(f"SELECT count() FROM {EVENTS_COLD_TABLE}")),
         'alerts_raw_total': int(_scalar("SELECT count() FROM siem.alerts_raw")),
         'alerts_agg_total': int(_scalar("SELECT count() FROM siem.alerts_agg")),
         'normalizer_rules': int(_scalar("SELECT count() FROM siem.normalizer_rules WHERE enabled = 1")),
@@ -585,14 +620,71 @@ def fetch_resource_overview() -> Dict[str, Any]:
         'stream_rules': int(_scalar("SELECT count() FROM siem.correlation_rules_stream WHERE enabled = 1")),
         'detection_rules': int(_scalar(f"SELECT count() FROM {DETECTION_RULE_TABLE}")),
         'active_list_items': int(_scalar(f"SELECT count() FROM {ACTIVE_LIST_TABLE}")),
+        'incident_history_rows': int(_scalar(f"SELECT count() FROM {ALERT_HISTORY_TABLE}")),
         'last_event_ts': _fmt(_scalar("SELECT max(ts) FROM siem.events")),
+        'hot_retention_hours': int(CONFIG.hot_retention_hours),
+        'cold_retention_days': int(CONFIG.cold_retention_days),
     }
+
+
+def ensure_cold_storage_support() -> None:
+    get_ch_client().command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {EVENTS_COLD_TABLE}
+        (
+            ts DateTime,
+            event_id String,
+            category String,
+            subcategory String,
+            event_action String DEFAULT '',
+            event_outcome String DEFAULT '',
+            src_ip UInt32,
+            dst_ip UInt32,
+            src_port UInt16,
+            dst_port UInt16,
+            device_vendor String,
+            device_product String,
+            log_source String,
+            host_name String DEFAULT '',
+            user_name String DEFAULT '',
+            target_user String DEFAULT '',
+            process_name String DEFAULT '',
+            process_executable String DEFAULT '',
+            process_command String DEFAULT '',
+            severity String,
+            message String,
+            normalized_json String DEFAULT '',
+            tags String
+        )
+        ENGINE = MergeTree
+        ORDER BY (ts, log_source, event_id)
+        """
+    )
 
 
 def ensure_incident_workflow_support() -> None:
     for table in ("siem.alerts_raw", "siem.alerts_agg"):
         get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS assignee String DEFAULT ''")
         get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS updated_ts DateTime DEFAULT now()")
+    get_ch_client().command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {ALERT_HISTORY_TABLE}
+        (
+            changed_ts DateTime DEFAULT now(),
+            view LowCardinality(String),
+            record_id String,
+            rule_id UInt32,
+            previous_status LowCardinality(String),
+            next_status LowCardinality(String),
+            previous_assignee String,
+            next_assignee String,
+            changed_by String,
+            note String
+        )
+        ENGINE = MergeTree
+        ORDER BY (view, record_id, changed_ts)
+        """
+    )
 
 
 def ensure_active_list_support() -> None:
@@ -601,6 +693,7 @@ def ensure_active_list_support() -> None:
         CREATE TABLE IF NOT EXISTS {ACTIVE_LIST_TABLE}
         (
             list_name LowCardinality(String),
+            list_kind LowCardinality(String) DEFAULT 'watch',
             value String,
             value_type LowCardinality(String),
             label String,
@@ -612,6 +705,7 @@ def ensure_active_list_support() -> None:
         ORDER BY (list_name, value)
         """
     )
+    get_ch_client().command(f"ALTER TABLE {ACTIVE_LIST_TABLE} ADD COLUMN IF NOT EXISTS list_kind LowCardinality(String) DEFAULT 'watch'")
 
 
 def fetch_active_list_items(limit: int = 200) -> List[Dict[str, Any]]:
@@ -619,6 +713,7 @@ def fetch_active_list_items(limit: int = 200) -> List[Dict[str, Any]]:
     query = f"""
         SELECT
             list_name,
+            list_kind,
             value_type,
             value,
             label,
@@ -632,6 +727,7 @@ def fetch_active_list_items(limit: int = 200) -> List[Dict[str, Any]]:
     return [
         {
             "list_name": row["list_name"],
+            "list_kind": row.get("list_kind", "watch"),
             "item_type": row["value_type"],
             "item_value": row["value"],
             "item_label": row["label"],
@@ -646,6 +742,7 @@ def fetch_active_list_items(limit: int = 200) -> List[Dict[str, Any]]:
 def save_active_list_item(
     *,
     list_name: str,
+    list_kind: str,
     item_type: str,
     item_value: str,
     item_label: str = "",
@@ -653,10 +750,13 @@ def save_active_list_item(
 ) -> Dict[str, Any]:
     ensure_active_list_support()
     safe_list_name = (list_name or "").strip()
+    safe_list_kind = (list_kind or "watch").strip().lower()
     safe_item_type = (item_type or "").strip().lower()
     safe_item_value = (item_value or "").strip()
     safe_item_label = (item_label or "").strip()
     safe_tags = ",".join(part.strip() for part in str(tags or "").split(",") if part.strip())
+    if safe_list_kind not in {"watch", "allow", "deny"}:
+        raise ValueError("Active list kind must be watch, allow or deny")
     if not safe_list_name or not safe_item_type or not safe_item_value:
         raise ValueError("Active list name, item type and item value are required")
     get_ch_client().command(
@@ -664,17 +764,19 @@ def save_active_list_item(
         ALTER TABLE {ACTIVE_LIST_TABLE}
         DELETE WHERE
             list_name = {_sql_quote(safe_list_name)}
+            AND list_kind = {_sql_quote(safe_list_kind)}
             AND value_type = {_sql_quote(safe_item_type)}
             AND value = {_sql_quote(safe_item_value)}
         """
     )
     get_ch_client().insert(
         ACTIVE_LIST_TABLE,
-        [[safe_list_name, safe_item_value, safe_item_type, safe_item_label, safe_tags, 1]],
-        column_names=["list_name", "value", "value_type", "label", "tags", "enabled"],
+        [[safe_list_name, safe_list_kind, safe_item_value, safe_item_type, safe_item_label, safe_tags, 1]],
+        column_names=["list_name", "list_kind", "value", "value_type", "label", "tags", "enabled"],
     )
     return {
         "list_name": safe_list_name,
+        "list_kind": safe_list_kind,
         "item_type": safe_item_type,
         "item_value": safe_item_value,
         "item_label": safe_item_label,
@@ -682,13 +784,139 @@ def save_active_list_item(
     }
 
 
-def update_alert_assignment(view: str, record_id: str, *, status: str, assignee: str) -> Dict[str, Any]:
+def archive_events_to_cold(older_than_hours: int) -> Dict[str, Any]:
+    ensure_cold_storage_support()
+    safe_hours = max(1, int(older_than_hours))
+    threshold = f"now() - INTERVAL {safe_hours} HOUR"
+    moved_rows = int(
+        _scalar(
+            f"""
+            SELECT count()
+            FROM siem.events
+            WHERE ts < {threshold}
+            """
+        )
+    )
+    if moved_rows <= 0:
+        return {
+            "moved_rows": 0,
+            "older_than_hours": safe_hours,
+            "status": "no-op",
+        }
+    get_ch_client().command(
+        f"""
+        INSERT INTO {EVENTS_COLD_TABLE}
+        SELECT
+            ts,
+            event_id,
+            category,
+            subcategory,
+            event_action,
+            event_outcome,
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            device_vendor,
+            device_product,
+            log_source,
+            host_name,
+            user_name,
+            target_user,
+            process_name,
+            process_executable,
+            process_command,
+            severity,
+            message,
+            normalized_json,
+            tags
+        FROM siem.events
+        WHERE ts < {threshold}
+        """
+    )
+    get_ch_client().command(
+        f"""
+        ALTER TABLE siem.events
+        DELETE WHERE ts < {threshold}
+        """
+    )
+    return {
+        "moved_rows": moved_rows,
+        "older_than_hours": safe_hours,
+        "status": "archived",
+    }
+
+
+def fetch_alert_history(view: str, record_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    ensure_incident_workflow_support()
+    query = f"""
+        SELECT
+            changed_ts,
+            view,
+            record_id,
+            rule_id,
+            previous_status,
+            next_status,
+            previous_assignee,
+            next_assignee,
+            changed_by,
+            note
+        FROM {ALERT_HISTORY_TABLE}
+        WHERE view = {_sql_quote(view)}
+          AND record_id = {_sql_quote(record_id)}
+        ORDER BY changed_ts DESC
+        LIMIT {int(limit)}
+    """
+    return [
+        {
+            "changed_ts": _fmt(row["changed_ts"]),
+            "view": row["view"],
+            "record_id": row["record_id"],
+            "rule_id": int(row["rule_id"]),
+            "previous_status": row["previous_status"],
+            "next_status": row["next_status"],
+            "previous_assignee": row["previous_assignee"],
+            "next_assignee": row["next_assignee"],
+            "changed_by": row["changed_by"],
+            "note": row["note"],
+        }
+        for row in get_ch_client().query(query).named_results()
+    ]
+
+
+def update_alert_assignment(
+    view: str,
+    record_id: str,
+    *,
+    status: str,
+    assignee: str,
+    changed_by: str,
+    note: str = "",
+) -> Dict[str, Any]:
     ensure_incident_workflow_support()
     target = "siem.alerts_raw" if view == "raw" else "siem.alerts_agg"
     id_column = "alert_id" if view == "raw" else "agg_id"
-    safe_status = _sql_quote((status or "new").strip().lower())
-    safe_assignee = _sql_quote((assignee or "").strip())
+    next_status = (status or "new").strip().lower()
+    next_assignee = (assignee or "").strip()
+    safe_status = _sql_quote(next_status)
+    safe_assignee = _sql_quote(next_assignee)
     safe_id = _sql_quote(record_id)
+    current_query = f"""
+        SELECT rule_id, lower(status) AS status, assignee
+        FROM {target}
+        WHERE toString({id_column}) = {safe_id}
+        LIMIT 1
+    """
+    result = get_ch_client().query(current_query).result_rows
+    if not result:
+        raise ValueError("Alert or incident not found")
+    rule_id, current_status, current_assignee = result[0]
+    current_status = str(current_status or "new").lower()
+    current_assignee = str(current_assignee or "")
+    if next_status != current_status:
+        allowed = INCIDENT_STATUS_TRANSITIONS.get(current_status, set())
+        if next_status not in allowed:
+            raise ValueError(f"Invalid transition: {current_status} -> {next_status}")
     get_ch_client().command(
         f"""
         ALTER TABLE {target}
@@ -699,7 +927,32 @@ def update_alert_assignment(view: str, record_id: str, *, status: str, assignee:
         WHERE toString({id_column}) = {safe_id}
         """
     )
-    return {"view": view, "record_id": record_id, "status": status, "assignee": assignee}
+    get_ch_client().insert(
+        ALERT_HISTORY_TABLE,
+        [[
+            view,
+            str(record_id),
+            int(rule_id),
+            current_status,
+            next_status,
+            current_assignee,
+            next_assignee,
+            (changed_by or "web").strip() or "web",
+            (note or "").strip(),
+        ]],
+        column_names=[
+            "view",
+            "record_id",
+            "rule_id",
+            "previous_status",
+            "next_status",
+            "previous_assignee",
+            "next_assignee",
+            "changed_by",
+            "note",
+        ],
+    )
+    return {"view": view, "record_id": record_id, "status": next_status, "assignee": next_assignee}
 
 
 DEFAULT_SIGMA_RULES = [
@@ -1116,6 +1369,206 @@ tags:
   - attack.t1562
 """.strip(),
     },
+    {
+        "id": 1017,
+        "title": "Linux Audit Config Changed",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Audit Config Changed
+id: sigma-linux-audit-config-changed
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_audit_config_changed
+  condition: selection
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1562
+""".strip(),
+    },
+    {
+        "id": 1018,
+        "title": "Linux User Created",
+        "level": "medium",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "user.target.name",
+        "yaml": """
+title: Linux User Created
+id: sigma-linux-user-created
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_user_created
+  condition: selection
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1136
+""".strip(),
+    },
+    {
+        "id": 1019,
+        "title": "Linux User Deleted",
+        "level": "medium",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "user.target.name",
+        "yaml": """
+title: Linux User Deleted
+id: sigma-linux-user-deleted
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_user_deleted
+  condition: selection
+level: medium
+tags:
+  - attack.defense_evasion
+  - attack.t1531
+""".strip(),
+    },
+    {
+        "id": 1020,
+        "title": "Linux Password Changed",
+        "level": "medium",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "user.target.name",
+        "yaml": """
+title: Linux Password Changed
+id: sigma-linux-password-changed
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_password_changed
+  condition: selection
+level: medium
+tags:
+  - attack.credential_access
+  - attack.t1098
+""".strip(),
+    },
+    {
+        "id": 1021,
+        "title": "Linux LD Preload Modified",
+        "level": "critical",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux LD Preload Modified
+id: sigma-linux-ld-preload-modified
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_ld_preload_modified
+  condition: selection
+level: critical
+tags:
+  - attack.persistence
+  - attack.t1574
+""".strip(),
+    },
+    {
+        "id": 1022,
+        "title": "Denylist Entity Observed",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Denylist Entity Observed
+id: sigma-denylist-entity-observed
+status: experimental
+logsource:
+  product: linux
+  service: enriched
+detection:
+  selection:
+    keywords:
+      - 'denylist:'
+  condition: selection
+level: high
+tags:
+    - enrichment.denylist
+    - attack.resource_development
+""".strip(),
+    },
+    {
+        "id": 1023,
+        "title": "Linux Sudoers Modified",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Sudoers Modified
+id: sigma-linux-sudoers-modified
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_sudoers_modified
+  condition: selection
+level: high
+tags:
+  - attack.privilege_escalation
+  - attack.t1548
+""".strip(),
+    },
+    {
+        "id": 1024,
+        "title": "Linux Systemd Unit Modified",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Linux Systemd Unit Modified
+id: sigma-linux-systemd-unit-modified
+status: experimental
+logsource:
+  product: linux
+  service: auditd
+detection:
+  selection:
+    event.provider: linux.auditd
+    event.type: linux_systemd_unit_modified
+  condition: selection
+level: high
+tags:
+  - attack.persistence
+  - attack.t1543
+""".strip(),
+    },
 ]
 
 
@@ -1354,6 +1807,8 @@ def convert_sigma_to_stream_rule(
 
     expr = _compile_sigma_condition(condition, selection_exprs)
     verification_query = _compile_sigma_condition(condition, verification_exprs)
+    expr = f"({expr}) and not tags icontains 'allowlist:'"
+    verification_query = f"({verification_query}) AND positionCaseInsensitiveUTF8(toString(tags), 'allowlist:') = 0"
     level = str(document.get("level", "medium") or "medium").lower()
     logsource = document.get("logsource") or {}
     if not isinstance(logsource, dict):
@@ -1394,11 +1849,7 @@ def _next_detection_rule_id() -> int:
 
 
 def _seed_default_sigma_rules() -> None:
-    existing_ids = {
-        int(row[0])
-        for row in get_ch_client().query(f"SELECT id FROM {DETECTION_RULE_TABLE}").result_rows
-    }
-    missing_rules = [
+    desired_rules = [
         convert_sigma_to_stream_rule(
             item["yaml"],
             threshold=item["threshold"],
@@ -1407,12 +1858,13 @@ def _seed_default_sigma_rules() -> None:
             rule_id=item["id"],
         )
         for item in DEFAULT_SIGMA_RULES
-        if int(item["id"]) not in existing_ids
     ]
-    if not missing_rules:
+    if not desired_rules:
         return
-    _insert_detection_rule_rows(missing_rules, sync_stream=False)
-    for rule in missing_rules:
+    for rule in desired_rules:
+        get_ch_client().command(f"ALTER TABLE {DETECTION_RULE_TABLE} DELETE WHERE id = {int(rule['id'])}")
+    _insert_detection_rule_rows(desired_rules, sync_stream=False)
+    for rule in desired_rules:
         _insert_stream_rule(rule)
 
 

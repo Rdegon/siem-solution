@@ -12,6 +12,7 @@ Supported comparisons:
 Boolean operators:
   - and
   - or
+  - not
 """
 
 from __future__ import annotations
@@ -171,6 +172,8 @@ def _tokenize(expr: str) -> List[Token]:
                 tokens.append(("AND", value))
             elif value == "or":
                 tokens.append(("OR", value))
+            elif value == "not":
+                tokens.append(("NOT", value))
             elif value in COMPARISON_WORDS:
                 tokens.append(("OP", value))
             else:
@@ -221,6 +224,9 @@ def parse_expr(expr: str) -> Tuple:
                 raise ValueError("Expected closing parenthesis")
             pos += 1
             return node
+        if token_type == "NOT":
+            pos += 1
+            return ("not", parse_factor())
         return parse_cmp()
 
     def parse_and() -> Tuple:
@@ -291,5 +297,9 @@ def eval_expr(ast: Optional[Tuple], event: Dict[str, Any]) -> bool:
     if node_type == "or":
         _, left, right = ast
         return eval_expr(left, event) or eval_expr(right, event)
+
+    if node_type == "not":
+        _, inner = ast
+        return not eval_expr(inner, event)
 
     raise ValueError(f"Unknown AST node type: {node_type}")

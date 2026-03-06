@@ -1,11 +1,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Body, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .auth import get_current_user
+from ..config import CONFIG
 from ..deps import (
+    archive_events_to_cold,
     fetch_alert_severity_breakdown,
     fetch_alert_status_breakdown,
     fetch_active_list_items,
@@ -23,6 +25,7 @@ from ..deps import (
     fetch_top_categories,
     fetch_top_sources,
 )
+from ..security import require_roles
 from ..templates import templates
 
 router = APIRouter()
@@ -153,7 +156,7 @@ async def create_sigma_rule(
     threshold: int = Form(1),
     window_s: int = Form(300),
     entity_field: str = Form('log_source'),
-    user=Depends(get_current_user),
+    user=Depends(require_roles('admin')),
 ) -> HTMLResponse:
     try:
         rule = save_sigma_rule(
@@ -185,15 +188,17 @@ async def create_sigma_rule(
 async def create_active_list_item(
     request: Request,
     list_name: str = Form(...),
+    list_kind: str = Form('watch'),
     item_type: str = Form(...),
     item_value: str = Form(...),
     item_label: str = Form(''),
     tags: str = Form(''),
-    user=Depends(get_current_user),
+    user=Depends(require_roles('admin')),
 ) -> HTMLResponse:
     try:
         item = save_active_list_item(
             list_name=list_name,
+            list_kind=list_kind,
             item_type=item_type,
             item_value=item_value,
             item_label=item_label,
@@ -209,9 +214,21 @@ async def create_active_list_item(
 
 
 @router.post('/api/rules/{rule_id}/test', response_class=JSONResponse)
-async def test_rule_api(rule_id: int, user=Depends(get_current_user)) -> JSONResponse:
+async def test_rule_api(rule_id: int, user=Depends(require_roles('admin', 'analyst'))) -> JSONResponse:
     try:
         return JSONResponse(test_detection_rule(rule_id))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({'error': str(exc)}, status_code=400)
+
+
+@router.post('/api/resources/archive-hot', response_class=JSONResponse)
+async def archive_hot_events_api(
+    payload: dict = Body(default={}),
+    user=Depends(require_roles('admin')),
+) -> JSONResponse:
+    hours = int(payload.get('older_than_hours', CONFIG.hot_retention_hours) or CONFIG.hot_retention_hours)
+    try:
+        return JSONResponse(archive_events_to_cold(max(1, hours)))
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({'error': str(exc)}, status_code=400)
 

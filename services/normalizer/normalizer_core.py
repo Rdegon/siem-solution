@@ -65,6 +65,8 @@ HIGH_RISK_EVENT_TYPES = {
     "linux_authorized_keys_modified",
     "linux_ld_preload_modified",
     "linux_firewall_disabled",
+    "linux_sudoers_modified",
+    "linux_systemd_unit_modified",
 }
 MEDIUM_RISK_EVENT_TYPES = {
     "audit_user_login_failure",
@@ -198,12 +200,20 @@ def _classify_file_path_event(result: Dict[str, Any], path_value: str) -> None:
         return
     if path_lower.endswith(".ssh/authorized_keys"):
         _set_event_shape(result, category="persistence", action="file_modify", event_type="linux_authorized_keys_modified")
+    elif path_lower == "/etc/sudoers" or path_lower.startswith("/etc/sudoers.d/"):
+        _set_event_shape(result, category="privilege", action="sudoers_modify", event_type="linux_sudoers_modified")
     elif path_lower in {"/etc/passwd", "/etc/shadow"}:
         _set_event_shape(result, category="credential", action="file_modify", event_type="linux_passwd_shadow_access")
-    elif path_lower.startswith("/etc/cron") or path_lower.endswith("/crontab"):
+    elif path_lower.startswith("/etc/cron") or path_lower.endswith("/crontab") or path_lower.startswith("/var/spool/cron"):
         _set_event_shape(result, category="persistence", action="scheduled_task_modify", event_type="linux_cron_modified")
+    elif path_lower.startswith("/etc/systemd/system") or path_lower.startswith("/usr/lib/systemd/system") or path_lower.startswith("/lib/systemd/system"):
+        _set_event_shape(result, category="persistence", action="service_unit_modify", event_type="linux_systemd_unit_modified")
     elif path_lower == "/etc/ld.so.preload":
         _set_event_shape(result, category="defense_evasion", action="preload_modify", event_type="linux_ld_preload_modified")
+    elif path_lower.startswith("/etc/audit/"):
+        _set_event_shape(result, category="defense_evasion", action="audit_config_change", event_type="linux_audit_config_changed")
+    elif path_lower.startswith("/etc/ufw") or path_lower.startswith("/etc/firewalld"):
+        _set_event_shape(result, category="defense_evasion", action="firewall_modify", event_type="linux_firewall_modified")
 
 
 def _classify_execve_activity(result: Dict[str, Any]) -> None:
@@ -254,6 +264,10 @@ def _classify_execve_activity(result: Dict[str, Any]) -> None:
         _set_event_shape(result, category="command_and_control", action="network_tool", event_type="linux_network_tool")
     elif executable in {"tcpdump", "tshark"}:
         _set_event_shape(result, category="discovery", action="sniff", event_type="linux_packet_capture")
+    elif executable in {"setcap", "setfattr"}:
+        _set_event_shape(result, category="privilege", action="capability_modify", event_type="linux_file_capability_modified")
+    elif executable == "chmod" and (" u+s" in f" {command_lower} " or " g+s" in f" {command_lower} " or " 4755 " in f" {command_lower} "):
+        _set_event_shape(result, category="privilege", action="setuid_modify", event_type="linux_setuid_bit_modified")
 
     if any(token in command_lower for token in ("bash -i", "/dev/tcp/", "nc -e", "ncat -e", "mkfifo ", "socat exec", "python -c", "perl -e", "php -r")):
         _set_event_shape(result, category="command_and_control", action="reverse_shell", event_type="linux_reverse_shell_possible")

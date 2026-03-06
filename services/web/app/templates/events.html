@@ -50,7 +50,7 @@
             <div><label class="hint" for="windowSelect">Time window</label><select id="windowSelect" class="select"><option value="15m" {% if initial_window == '15m' %}selected{% endif %}>Last 15m</option><option value="1h" {% if initial_window == '1h' %}selected{% endif %}>Last 1h</option><option value="6h" {% if initial_window == '6h' %}selected{% endif %}>Last 6h</option><option value="24h" {% if initial_window == '24h' %}selected{% endif %}>Last 24h</option><option value="7d" {% if initial_window == '7d' %}selected{% endif %}>Last 7d</option><option value="all" {% if initial_window == 'all' %}selected{% endif %}>All data</option></select></div>
             <div><label class="hint" for="limitSelect">Row limit</label><select id="limitSelect" class="select">{% for value in [100, 250, 500, 1000] %}<option value="{{ value }}" {% if initial_limit == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
             <div><label class="hint" for="refreshSelect">Auto refresh</label><select id="refreshSelect" class="select"><option value="off" {% if initial_auto_refresh == 'off' %}selected{% endif %}>Off</option><option value="10000" {% if initial_auto_refresh == '10000' %}selected{% endif %}>10s</option><option value="30000" {% if initial_auto_refresh == '30000' %}selected{% endif %}>30s</option><option value="60000" {% if initial_auto_refresh == '60000' %}selected{% endif %}>1m</option></select></div>
-            <div><label class="hint">Storage</label><div class="field" style="display:flex;align-items:center;">ClickHouse hot storage</div></div>
+            <div><label class="hint" for="storageSelect">Storage</label><select id="storageSelect" class="select"><option value="hot" {% if initial_storage == 'hot' %}selected{% endif %}>Hot</option><option value="cold" {% if initial_storage == 'cold' %}selected{% endif %}>Cold</option><option value="all" {% if initial_storage == 'all' %}selected{% endif %}>Hot + cold</option></select></div>
         </div>
         <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:14px;"><button class="btn primary" id="runQueryBtn" type="button">Run query</button><button class="btn ghost" id="resetQueryBtn" type="button">Reset</button><button class="btn ghost" id="exportBtn" type="button">Export TSV</button><button class="btn ghost" type="button" data-example="message ILIKE '%auditd:%'">auditd events</button><button class="btn ghost" type="button" data-example="event_action = 'account_create'">identity changes</button><button class="btn ghost" type="button" data-example="process_command ILIKE '%curl%' OR process_command ILIKE '%wget%'">download tools</button></div>
         <div id="queryError" class="error-box" style="display:none; margin-top:14px;"></div>
@@ -83,6 +83,7 @@ const queryInput = document.getElementById('queryInput');
 const windowSelect = document.getElementById('windowSelect');
 const limitSelect = document.getElementById('limitSelect');
 const refreshSelect = document.getElementById('refreshSelect');
+const storageSelect = document.getElementById('storageSelect');
 const runQueryBtn = document.getElementById('runQueryBtn');
 const resetQueryBtn = document.getElementById('resetQueryBtn');
 const exportBtn = document.getElementById('exportBtn');
@@ -115,6 +116,7 @@ function restoreColumns(columns) {
 function persistState() {
     localStorage.setItem('siem_events_columns_v2', JSON.stringify(visibleColumns));
     localStorage.setItem('siem_events_refresh_v2', refreshSelect.value);
+    localStorage.setItem('siem_events_storage_v1', storageSelect.value);
 }
 function renderTimeline(rows) {
     const max = Math.max(...rows.map((row) => Number(row.count || 0)), 1);
@@ -210,9 +212,19 @@ async function runQuery() {
         const response = await fetch('/api/events/query', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: queryInput.value.trim(), window: windowSelect.value, limit: Number(limitSelect.value || '250') }),
+            body: JSON.stringify({ query: queryInput.value.trim(), window: windowSelect.value, limit: Number(limitSelect.value || '250'), storage: storageSelect.value }),
         });
-        const payload = await response.json();
+        const raw = await response.text();
+        let payload;
+        try {
+            payload = JSON.parse(raw);
+        } catch (error) {
+            if (response.redirected || raw.includes('/auth/login')) {
+                window.location.href = '/auth/login';
+                return;
+            }
+            throw new Error(raw.slice(0, 600) || 'Query failed');
+        }
         if (!response.ok) throw new Error(payload.error || 'Query failed');
         currentRows = payload.rows || [];
         currentColumns = payload.columns || [];
@@ -252,6 +264,7 @@ async function runQuery() {
 function resetQuery() {
     queryInput.value = '';
     windowSelect.value = '24h';
+    storageSelect.value = 'hot';
     limitSelect.value = '250';
     closeDrawer();
     runQuery();
@@ -274,6 +287,7 @@ resetQueryBtn.addEventListener('click', resetQuery);
 exportBtn.addEventListener('click', () => downloadTsv(`rdegon-siem-events-${Date.now()}.tsv`, currentColumns, currentRows));
 refreshSelect.addEventListener('change', setRefreshTimer);
 windowSelect.addEventListener('change', runQuery);
+storageSelect.addEventListener('change', runQuery);
 limitSelect.addEventListener('change', runQuery);
 queryInput.addEventListener('keydown', (event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') runQuery(); });
 closeEventDrawerBtn.addEventListener('click', closeDrawer);
@@ -281,6 +295,8 @@ eventDrawerOverlay.addEventListener('click', closeDrawer);
 window.addEventListener('rdegon:timezone-changed', () => { renderTable(); renderTimeline(currentHistogram); if (selectedRowIndex !== null) renderDrawer(currentRows[selectedRowIndex]); });
 const savedRefresh = localStorage.getItem('siem_events_refresh_v2');
 if (savedRefresh && refreshSelect.value === 'off') refreshSelect.value = savedRefresh;
+const savedStorage = localStorage.getItem('siem_events_storage_v1');
+if (savedStorage && ['hot', 'cold', 'all'].includes(savedStorage)) storageSelect.value = savedStorage;
 setRefreshTimer();
 runQuery();
 </script>

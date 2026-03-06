@@ -16,6 +16,7 @@ async def events_page(
     request: Request,
     q: str = Query('', description='SQL query or expression for events_view'),
     window: str = Query('24h'),
+    storage: str = Query('hot'),
     auto_refresh: str = Query('off'),
     limit: int = Query(EVENT_ROW_LIMIT_DEFAULT, ge=25, le=1000),
     user=Depends(get_current_user),
@@ -28,6 +29,7 @@ async def events_page(
             'active_page': 'events',
             'initial_query': q,
             'initial_window': window,
+            'initial_storage': storage,
             'initial_auto_refresh': auto_refresh,
             'initial_limit': limit,
         },
@@ -38,8 +40,9 @@ async def events_page(
 async def events_query_api(payload: dict = Body(default={}), user=Depends(get_current_user)) -> JSONResponse:
     query_text = str(payload.get('query', '') or '')
     window = str(payload.get('window', '24h') or '24h')
+    storage = str(payload.get('storage', 'hot') or 'hot')
     limit = int(payload.get('limit', EVENT_ROW_LIMIT_DEFAULT) or EVENT_ROW_LIMIT_DEFAULT)
     try:
-        return JSONResponse(execute_event_query(query_text=query_text, window=window, limit=limit))
+        return JSONResponse(execute_event_query(query_text=query_text, window=window, limit=limit, storage=storage))
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({'error': str(exc)}, status_code=400)

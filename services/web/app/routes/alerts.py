@@ -5,7 +5,8 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .auth import get_current_user
-from ..deps import fetch_alert_metrics, fetch_alerts_agg, fetch_alerts_raw, update_alert_assignment
+from ..security import require_roles
+from ..deps import fetch_alert_history, fetch_alert_metrics, fetch_alerts_agg, fetch_alerts_raw, update_alert_assignment
 from ..templates import templates
 
 router = APIRouter()
@@ -57,7 +58,7 @@ async def update_alert_api(
     view: str,
     record_id: str,
     payload: dict = Body(default={}),
-    user=Depends(get_current_user),
+    user=Depends(require_roles('admin', 'analyst')),
 ) -> JSONResponse:
     if view not in {'raw', 'agg'}:
         return JSONResponse({'error': 'Unsupported alert view'}, status_code=400)
@@ -67,7 +68,19 @@ async def update_alert_api(
             record_id,
             status=str(payload.get('status', 'new') or 'new'),
             assignee=str(payload.get('assignee', '') or ''),
+            changed_by=str(getattr(user, 'username', 'web') or 'web'),
+            note=str(payload.get('note', '') or ''),
         )
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({'error': str(exc)}, status_code=400)
     return JSONResponse(result)
+
+
+@router.get('/api/alerts/{view}/{record_id}/history', response_class=JSONResponse)
+async def alert_history_api(view: str, record_id: str, user=Depends(get_current_user)) -> JSONResponse:
+    if view not in {'raw', 'agg'}:
+        return JSONResponse({'error': 'Unsupported alert view'}, status_code=400)
+    try:
+        return JSONResponse({'history': fetch_alert_history(view, record_id)})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({'error': str(exc)}, status_code=400)

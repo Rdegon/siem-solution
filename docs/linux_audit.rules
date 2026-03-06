@@ -1,0 +1,34 @@
+-b 8192
+-f 1
+
+-w /etc/sudoers -p wa -k scope
+-w /etc/sudoers.d/ -p wa -k scope
+-w /etc/passwd -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/ssh/sshd_config -p wa -k ssh
+-w /etc/audit/ -p wa -k audit_config
+-w /etc/audit/rules.d/ -p wa -k audit_config
+-w /etc/ld.so.preload -p wa -k preload
+-w /etc/systemd/system/ -p wa -k systemd
+-w /usr/lib/systemd/system/ -p wa -k systemd
+-w /lib/systemd/system/ -p wa -k systemd
+-w /etc/crontab -p wa -k cron
+-w /etc/cron.allow -p wa -k cron
+-w /etc/cron.deny -p wa -k cron
+-w /etc/cron.d/ -p wa -k cron
+-w /etc/cron.daily/ -p wa -k cron
+-w /etc/cron.hourly/ -p wa -k cron
+-w /etc/cron.monthly/ -p wa -k cron
+-w /etc/cron.weekly/ -p wa -k cron
+-w /var/spool/cron/ -p wa -k cron
+-w /root/.ssh/authorized_keys -p wa -k ssh
+-w /home/rdegon/.ssh/authorized_keys -p wa -k ssh
+-w /etc/ufw/ -p wa -k firewall
+-w /etc/firewalld/ -p wa -k firewall
+
+-a always,exit -F arch=b64 -S execve -F auid>=1000 -F auid!=4294967295 -k user_exec
+-a always,exit -F arch=b32 -S execve -F auid>=1000 -F auid!=4294967295 -k user_exec
+-a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=4294967295 -k exec_as_root
+-a always,exit -F arch=b32 -S execve -F euid=0 -F auid>=1000 -F auid!=4294967295 -k exec_as_root

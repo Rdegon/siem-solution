@@ -193,7 +193,7 @@ class WriterWorker:
                 return
             rows = self._ch.execute(
                 f"""
-                SELECT list_name, value_type, value, label, tags
+                SELECT list_name, list_kind, value_type, value, label, tags
                 FROM {self._settings.active_list_table}
                 WHERE enabled = 1
                 """
@@ -202,10 +202,11 @@ class WriterWorker:
             logger.warning("Failed to refresh active lists", extra={"extra": {"error": str(exc)}})
             return
         active_lists: Dict[str, Dict[str, Dict[str, str]]] = {}
-        for list_name, value_type, value, label, tags in rows:
+        for list_name, list_kind, value_type, value, label, tags in rows:
             bucket = active_lists.setdefault(str(value_type or "").lower(), {})
             bucket[str(value or "").strip()] = {
                 "list_name": str(list_name or "").strip(),
+                "list_kind": str(list_kind or "watch").strip().lower() or "watch",
                 "label": str(label or "").strip(),
                 "tags": str(tags or "").strip(),
             }
@@ -234,7 +235,8 @@ class WriterWorker:
                 if value_type == "raw":
                     for raw_value, meta in bucket.items():
                         if raw_value and raw_value in normalized:
-                            for tag in [f"watchlist:{meta['list_name']}", *self._normalize_tags(meta.get("tags", ""))]:
+                            prefix = {"watch": "watchlist", "allow": "allowlist", "deny": "denylist"}.get(meta.get("list_kind", "watch"), "watchlist")
+                            for tag in [f"{prefix}:{meta['list_name']}", *self._normalize_tags(meta.get("tags", ""))]:
                                 if tag and tag not in seen:
                                     seen.add(tag)
                                     tags.append(tag)
@@ -242,7 +244,8 @@ class WriterWorker:
                 meta = bucket.get(normalized)
                 if not meta:
                     continue
-                for tag in [f"watchlist:{meta['list_name']}", *self._normalize_tags(meta.get("tags", ""))]:
+                prefix = {"watch": "watchlist", "allow": "allowlist", "deny": "denylist"}.get(meta.get("list_kind", "watch"), "watchlist")
+                for tag in [f"{prefix}:{meta['list_name']}", *self._normalize_tags(meta.get("tags", ""))]:
                     if tag and tag not in seen:
                         seen.add(tag)
                         tags.append(tag)

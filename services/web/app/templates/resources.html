@@ -6,15 +6,42 @@
 {% block content %}
 <div class="grid-4">
     <section class="kpi"><p class="kpi-label">ClickHouse</p><div class="kpi-value">{{ 'OK' if overview.clickhouse_ok else 'FAIL' }}</div><div class="kpi-meta">Web-side storage connectivity check.</div></section>
-    <section class="kpi"><p class="kpi-label">Events total</p><div class="kpi-value">{{ overview.events_total or 0 }}</div><div class="kpi-meta">Last event timestamp: {{ overview.last_event_ts or 'n/a' }}</div></section>
+    <section class="kpi"><p class="kpi-label">Events hot / cold</p><div class="kpi-value">{{ overview.events_hot_total or 0 }} / {{ overview.events_cold_total or 0 }}</div><div class="kpi-meta">Last hot event timestamp: {{ overview.last_event_ts or 'n/a' }}</div></section>
     <section class="kpi"><p class="kpi-label">Alerts raw / agg</p><div class="kpi-value">{{ overview.alerts_raw_total or 0 }} / {{ overview.alerts_agg_total or 0 }}</div><div class="kpi-meta">Rows currently stored in alert tables.</div></section>
     <section class="kpi"><p class="kpi-label">Rules</p><div class="kpi-value">{{ overview.normalizer_rules or 0 }}/{{ overview.filter_rules or 0 }}/{{ overview.stream_rules or 0 }}</div><div class="kpi-meta">Normalizer, filter, and stream correlation rules.</div></section>
 </div>
 <div class="grid-2">
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Resource inventory</h3><p class="panel-subtitle">Counts pulled directly through the web application's ClickHouse connection.</p></div></div><div class="panel-body"><div class="kv-list"><div class="kv"><div class="kv-key">ClickHouse status</div><div>{{ 'healthy' if overview.clickhouse_ok else 'unreachable' }}</div></div><div class="kv"><div class="kv-key">Events rows</div><div>{{ overview.events_total or 0 }}</div></div><div class="kv"><div class="kv-key">alerts_raw rows</div><div>{{ overview.alerts_raw_total or 0 }}</div></div><div class="kv"><div class="kv-key">alerts_agg rows</div><div>{{ overview.alerts_agg_total or 0 }}</div></div><div class="kv"><div class="kv-key">Enabled normalizer rules</div><div>{{ overview.normalizer_rules or 0 }}</div></div><div class="kv"><div class="kv-key">Enabled filter rules</div><div>{{ overview.filter_rules or 0 }}</div></div><div class="kv"><div class="kv-key">Enabled stream rules</div><div>{{ overview.stream_rules or 0 }}</div></div><div class="kv"><div class="kv-key">Detection catalog rules</div><div>{{ overview.detection_rules or 0 }}</div></div></div></div></section>
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Query reference</h3><p class="panel-subtitle">Supported search styles in the Event Console.</p></div></div><div class="panel-body"><div class="page-note">Use <span class="mono">events_view</span> for full SELECT statements. Available columns: <span class="mono">ts, event_id, category, subcategory, src_ip, dst_ip, src_port, dst_port, device_vendor, device_product, log_source, severity, message, tags</span>.</div><div class="sql-box mono">message ILIKE '%sshd%'
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Resource inventory</h3><p class="panel-subtitle">Counts pulled directly through the web application's ClickHouse connection.</p></div></div><div class="panel-body"><div class="kv-list"><div class="kv"><div class="kv-key">ClickHouse status</div><div>{{ 'healthy' if overview.clickhouse_ok else 'unreachable' }}</div></div><div class="kv"><div class="kv-key">Hot events rows</div><div>{{ overview.events_hot_total or 0 }}</div></div><div class="kv"><div class="kv-key">Cold events rows</div><div>{{ overview.events_cold_total or 0 }}</div></div><div class="kv"><div class="kv-key">alerts_raw rows</div><div>{{ overview.alerts_raw_total or 0 }}</div></div><div class="kv"><div class="kv-key">alerts_agg rows</div><div>{{ overview.alerts_agg_total or 0 }}</div></div><div class="kv"><div class="kv-key">Enabled normalizer rules</div><div>{{ overview.normalizer_rules or 0 }}</div></div><div class="kv"><div class="kv-key">Enabled filter rules</div><div>{{ overview.filter_rules or 0 }}</div></div><div class="kv"><div class="kv-key">Enabled stream rules</div><div>{{ overview.stream_rules or 0 }}</div></div><div class="kv"><div class="kv-key">Detection catalog rules</div><div>{{ overview.detection_rules or 0 }}</div></div><div class="kv"><div class="kv-key">Active list items</div><div>{{ overview.active_list_items or 0 }}</div></div><div class="kv"><div class="kv-key">Incident history rows</div><div>{{ overview.incident_history_rows or 0 }}</div></div><div class="kv"><div class="kv-key">Default hot retention</div><div>{{ overview.hot_retention_hours or 0 }} hours</div></div><div class="kv"><div class="kv-key">Default cold retention</div><div>{{ overview.cold_retention_days or 0 }} days</div></div></div></div></section>
+    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Query reference</h3><p class="panel-subtitle">Supported search styles in the Event Console and retention controls.</p></div></div><div class="panel-body"><div class="page-note">Use <span class="mono">events_view</span> for full SELECT statements. Available columns: <span class="mono">ts, event_id, category, subcategory, event_action, event_outcome, src_ip, dst_ip, src_port, dst_port, device_vendor, device_product, log_source, host_name, user_name, target_user, process_name, process_executable, process_command, severity, message, normalized_json, tags</span>. Storage selector supports <span class="mono">hot</span>, <span class="mono">cold</span> and <span class="mono">hot + cold</span>.</div><div class="sql-box mono">message ILIKE '%sshd%'
 log_source = '192.168.1.39' AND severity IN ('high', 'critical')
-SELECT ts, log_source, severity, message FROM events_view WHERE src_ip = '10.0.0.1' ORDER BY ts DESC LIMIT 50</div></div></section>
+SELECT ts, log_source, severity, user_name, process_command FROM events_view WHERE src_ip = '10.0.0.1' ORDER BY ts DESC LIMIT 50</div></div></section>
 </div>
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Retention and cold storage</h3><p class="panel-subtitle">Manual archive action for the lab deployment. Rows older than the chosen hot window are copied into <span class="mono">siem.events_cold</span> and removed from hot storage.</p></div></div><div class="panel-body"><div class="grid-2"><div><label class="hint" for="archiveHours">Archive events older than</label><input id="archiveHours" class="field" type="number" min="1" value="{{ overview.hot_retention_hours or 168 }}"></div><div style="display:flex; align-items:end; gap:12px;"><button id="archiveHotBtn" type="button" class="btn primary" {% if user.role != 'admin' %}disabled{% endif %}>Archive hot -> cold</button><div class="page-note">{% if user.role == 'admin' %}Admin only action{% else %}Current role is read-only{% endif %}</div></div></div><div id="archiveOutput" class="sql-box mono" style="margin-top:16px;">Archive helper is ready. No action has been executed yet.</div></div></section>
 <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top reporting sources</h3><p class="panel-subtitle">Current activity snapshot from the last 24 hours.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Source</th><th>Events</th><th>Last seen</th><th>High + critical</th></tr></thead><tbody>{% for source in sources %}<tr><td class="mono">{{ source.log_source }}</td><td>{{ source.events }}</td><td>{{ source.last_seen }}</td><td>{{ source.high_count + source.critical_count }}</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+const archiveHotBtn = document.getElementById('archiveHotBtn');
+const archiveHours = document.getElementById('archiveHours');
+const archiveOutput = document.getElementById('archiveOutput');
+if (archiveHotBtn) {
+    archiveHotBtn.addEventListener('click', async () => {
+        archiveHotBtn.disabled = true;
+        try {
+            const response = await fetch('/api/resources/archive-hot', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ older_than_hours: Number(archiveHours.value || '168') }),
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || 'Archive failed');
+            archiveOutput.textContent = `Moved ${payload.moved_rows} rows to cold storage using threshold ${payload.older_than_hours} hours.`;
+        } catch (error) {
+            archiveOutput.textContent = error.message || String(error);
+        } finally {
+            archiveHotBtn.disabled = false;
+        }
+    });
+}
+</script>
 {% endblock %}

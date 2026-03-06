@@ -5,6 +5,9 @@
     <meta charset="UTF-8">
     <title>{% block title %}Rdegon SIEM{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Cache-Control" content="no-store, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
@@ -360,6 +363,7 @@
                     <div class="context-row"><span>Instance</span><strong>{{ request.app.state.instance_name }}</strong></div>
                     <div class="context-row"><span>Environment</span><strong>{{ request.app.state.env }}</strong></div>
                     <div class="context-row"><span>User</span><strong>{{ user.username if user is defined else 'guest' }}</strong></div>
+                    <div class="context-row"><span>Role</span><strong>{{ user.role if user is defined else 'guest' }}</strong></div>
                     <div class="context-row"><span>Base URL</span><strong>{{ request.app.state.base_url }}</strong></div>
                 </div>
             </div>
@@ -378,7 +382,7 @@
                         <span class="badge sql">ClickHouse live</span>
                         <button class="timezone-toggle" id="timezoneToggle" type="button" aria-label="Set time zone"><span class="btn-label">TZ</span><span id="timezoneToggleLabel">Local</span></button>
                         <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme"><span class="btn-label" id="themeToggleIcon">DK</span><span id="themeToggleLabel">Dark</span></button>
-                        <span class="status-pill">{{ user.username if user is defined else 'guest' }}</span>
+                        <span class="status-pill">{{ user.username if user is defined else 'guest' }} / {{ user.role if user is defined else 'guest' }}</span>
                         <a class="btn ghost" href="/auth/logout">Sign out</a>
                     </div>
                 </div>

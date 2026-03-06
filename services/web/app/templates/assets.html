@@ -2,6 +2,80 @@
 {% block title %}Assets | Rdegon SIEM{% endblock %}
 {% block page_title %}Assets and Detection Content{% endblock %}
 {% block page_subtitle %}Manage observed devices, Sigma-derived detections, normalizer content, and the rule assets that feed the Linux monitoring pipeline.{% endblock %}
+{% block extra_head %}
+<style>
+    .rule-catalog {
+        display: grid;
+        gap: 16px;
+    }
+    .rule-card {
+        display: grid;
+        grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.7fr) minmax(240px, 0.9fr) auto;
+        gap: 18px;
+        padding: 20px;
+        border-radius: 22px;
+        background: linear-gradient(180deg, var(--surface-solid), var(--surface-alt));
+        border: 1px solid var(--border);
+    }
+    .rule-main {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+    }
+    .rule-title-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+    }
+    .rule-id {
+        min-width: 60px;
+        color: var(--text-mute);
+        font: 600 12px var(--font-mono);
+        letter-spacing: .12em;
+        text-transform: uppercase;
+    }
+    .rule-meta-stack {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+    }
+    .rule-meta-grid {
+        display: grid;
+        gap: 12px;
+    }
+    .rule-meta-card {
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        background: var(--surface-soft);
+        min-width: 0;
+    }
+    .rule-meta-card .hint {
+        margin-bottom: 10px;
+    }
+    .rule-meta-card .page-note {
+        overflow-wrap: anywhere;
+    }
+    .rule-actions {
+        display: grid;
+        align-content: start;
+        gap: 10px;
+        min-width: 130px;
+    }
+    .rule-actions .btn {
+        width: 100%;
+    }
+    @media (max-width: 1280px) {
+        .rule-card {
+            grid-template-columns: 1fr;
+        }
+        .rule-actions {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+</style>
+{% endblock %}
 {% block content %}
 <div class="view-stack">
     {% if status %}
@@ -32,22 +106,25 @@
             </div>
             <div class="panel-body">
                 <form method="post" action="/assets/rules" class="view-stack">
+                    {% if user.role != 'admin' %}
+                    <div class="page-note">Current role is read-only for rule authoring. Use an admin account to save Sigma rules.</div>
+                    {% endif %}
                     <div>
                         <label class="hint" for="sigmaYaml">Sigma YAML</label>
-                        <textarea id="sigmaYaml" name="sigma_yaml" class="textarea" style="min-height: 360px;">{{ rule_form.sigma_yaml }}</textarea>
+                        <textarea id="sigmaYaml" name="sigma_yaml" class="textarea" style="min-height: 360px;" {% if user.role != 'admin' %}disabled{% endif %}>{{ rule_form.sigma_yaml }}</textarea>
                     </div>
                     <div class="grid-3">
                         <div>
                             <label class="hint" for="threshold">Threshold</label>
-                            <input id="threshold" name="threshold" type="number" min="1" class="field" value="{{ rule_form.threshold }}">
+                            <input id="threshold" name="threshold" type="number" min="1" class="field" value="{{ rule_form.threshold }}" {% if user.role != 'admin' %}disabled{% endif %}>
                         </div>
                         <div>
                             <label class="hint" for="windowS">Window, sec</label>
-                            <input id="windowS" name="window_s" type="number" min="60" step="60" class="field" value="{{ rule_form.window_s }}">
+                            <input id="windowS" name="window_s" type="number" min="60" step="60" class="field" value="{{ rule_form.window_s }}" {% if user.role != 'admin' %}disabled{% endif %}>
                         </div>
                         <div>
                             <label class="hint" for="entityField">Entity field</label>
-                            <select id="entityField" name="entity_field" class="select">
+                            <select id="entityField" name="entity_field" class="select" {% if user.role != 'admin' %}disabled{% endif %}>
                                 {% for field in entity_fields %}
                                 <option value="{{ field }}" {% if rule_form.entity_field == field %}selected{% endif %}>{{ field }}</option>
                                 {% endfor %}
@@ -55,7 +132,7 @@
                         </div>
                     </div>
                     <div class="chip-row">
-                        <button type="submit" class="btn primary">Save rule</button>
+                        <button type="submit" class="btn primary" {% if user.role != 'admin' %}disabled{% endif %}>Save rule</button>
                         <button type="button" class="btn ghost" id="resetSigmaDraft">Reset draft</button>
                     </div>
                 </form>
@@ -91,14 +168,27 @@
             </div>
             <div class="panel-body">
                 <form method="post" action="/assets/active-lists" class="view-stack">
+                    {% if user.role != 'admin' %}
+                    <div class="page-note">Current role is read-only for enrichment list management.</div>
+                    {% endif %}
                     <div class="grid-2">
                         <div>
                             <label class="hint" for="listName">List name</label>
-                            <input id="listName" name="list_name" class="field" placeholder="vip_admins">
+                            <input id="listName" name="list_name" class="field" placeholder="vip_admins" {% if user.role != 'admin' %}disabled{% endif %}>
                         </div>
                         <div>
+                            <label class="hint" for="listKind">List role</label>
+                            <select id="listKind" name="list_kind" class="select" {% if user.role != 'admin' %}disabled{% endif %}>
+                                <option value="watch">watch</option>
+                                <option value="allow">allow</option>
+                                <option value="deny">deny</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid-2">
+                        <div>
                             <label class="hint" for="itemType">Item type</label>
-                            <select id="itemType" name="item_type" class="select">
+                            <select id="itemType" name="item_type" class="select" {% if user.role != 'admin' %}disabled{% endif %}>
                                 <option value="ip">ip</option>
                                 <option value="user">user</option>
                                 <option value="host">host</option>
@@ -110,19 +200,19 @@
                     <div class="grid-3">
                         <div>
                             <label class="hint" for="itemValue">Item value</label>
-                            <input id="itemValue" name="item_value" class="field" placeholder="192.168.1.39">
+                            <input id="itemValue" name="item_value" class="field" placeholder="192.168.1.39" {% if user.role != 'admin' %}disabled{% endif %}>
                         </div>
                         <div>
                             <label class="hint" for="itemLabel">Label</label>
-                            <input id="itemLabel" name="item_label" class="field" placeholder="Web node">
+                            <input id="itemLabel" name="item_label" class="field" placeholder="Web node" {% if user.role != 'admin' %}disabled{% endif %}>
                         </div>
                         <div>
                             <label class="hint" for="itemTags">Tags</label>
-                            <input id="itemTags" name="tags" class="field" placeholder="vip,critical-asset">
+                            <input id="itemTags" name="tags" class="field" placeholder="vip,critical-asset" {% if user.role != 'admin' %}disabled{% endif %}>
                         </div>
                     </div>
                     <div class="chip-row">
-                        <button type="submit" class="btn primary">Save active list item</button>
+                        <button type="submit" class="btn primary" {% if user.role != 'admin' %}disabled{% endif %}>Save active list item</button>
                     </div>
                 </form>
             </div>
@@ -140,6 +230,7 @@
                     <thead>
                         <tr>
                             <th>List</th>
+                            <th>Role</th>
                             <th>Type</th>
                             <th>Value</th>
                             <th>Label</th>
@@ -151,6 +242,7 @@
                         {% for item in active_list_items %}
                         <tr>
                             <td class="table-code">{{ item.list_name }}</td>
+                            <td>{{ item.list_kind }}</td>
                             <td>{{ item.item_type }}</td>
                             <td class="table-code">{{ item.item_value }}</td>
                             <td>{{ item.item_label or 'n/a' }}</td>
@@ -159,7 +251,7 @@
                         </tr>
                         {% endfor %}
                         {% if not active_list_items %}
-                        <tr><td colspan="6"><div class="empty-box">No active list items saved yet.</div></td></tr>
+                        <tr><td colspan="7"><div class="empty-box">No active list items saved yet.</div></td></tr>
                         {% endif %}
                     </tbody>
                 </table>
@@ -174,70 +266,59 @@
                 <p class="panel-subtitle">Sigma-oriented content pack with runtime thresholds, entity keys, verification conditions, and links into the Event Console.</p>
             </div>
         </div>
-        <div class="panel-body table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Rule</th>
-                        <th>Level</th>
-                        <th>Logsource</th>
-                        <th>Threshold</th>
-                        <th>Verification</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for rule in detection_rules %}
-                    <tr>
-                        <td class="table-code">{{ rule.id }}</td>
-                        <td>
-                            <div style="display:grid; gap:8px;">
-                                <div style="font-weight:700;">{{ rule.title }}</div>
-                                <div class="page-note">{{ rule.description or 'Sigma-derived Linux detection rule.' }}</div>
-                                <div class="chip-row">
-                                    <span class="chip">{{ rule.sigma_id or 'custom sigma' }}</span>
-                                    <span class="chip">{{ rule.entity_field }}</span>
-                                    {% for tag in rule.tags[:3] %}
-                                    <span class="chip">{{ tag }}</span>
-                                    {% endfor %}
-                                </div>
-                            </div>
-                        </td>
-                        <td><span class="severity sev-{{ rule.level }}">{{ rule.level }}</span></td>
-                        <td>
-                            <div class="kv-list">
-                                <div class="kv"><div class="kv-key">product</div><div class="kv-value">{{ rule.logsource_product or 'n/a' }}</div></div>
-                                <div class="kv"><div class="kv-key">service</div><div class="kv-value">{{ rule.logsource_service or 'n/a' }}</div></div>
-                            </div>
-                        </td>
-                        <td>
-                            <div class="kv-list">
-                                <div class="kv"><div class="kv-key">threshold</div><div class="kv-value">{{ rule.threshold }}</div></div>
-                                <div class="kv"><div class="kv-key">window</div><div class="kv-value">{{ rule.window_s }} sec</div></div>
-                            </div>
-                        </td>
-                        <td>
-                            <div style="display:grid; gap:8px;">
-                                <div class="page-note">24h hits: <strong>{{ rule.match_hits_24h }}</strong></div>
-                                <div class="page-note">Alert rows: <strong>{{ rule.alert_hits_total }}</strong></div>
-                                <div class="page-note">Last alert: <strong>{{ rule.last_alert_ts or 'n/a' }}</strong></div>
-                                <div class="sql-box mono">{{ rule.verification_query }}</div>
-                            </div>
-                        </td>
-                        <td>
-                            <div class="chip-row">
-                                <button type="button" class="btn ghost" data-test-rule="{{ rule.id }}">Test</button>
-                                <a class="btn ghost" href="{{ rule.events_link }}">Events</a>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                    {% if not detection_rules %}
-                    <tr><td colspan="7"><div class="empty-box">Detection rule catalog is empty.</div></td></tr>
-                    {% endif %}
-                </tbody>
-            </table>
+        <div class="panel-body">
+            <div class="rule-catalog">
+                {% for rule in detection_rules %}
+                <article class="rule-card">
+                    <div class="rule-main">
+                        <div class="rule-title-row">
+                            <span class="rule-id">ID {{ rule.id }}</span>
+                            <div style="font-weight:700; font-size:20px;">{{ rule.title }}</div>
+                            <span class="severity sev-{{ rule.level }}">{{ rule.level }}</span>
+                        </div>
+                        <div class="page-note">{{ rule.description or 'Sigma-derived Linux detection rule.' }}</div>
+                        <div class="chip-row">
+                            <span class="chip">{{ rule.sigma_id or 'custom sigma' }}</span>
+                            <span class="chip">{{ rule.entity_field }}</span>
+                            {% for tag in rule.tags[:4] %}
+                            <span class="chip">{{ tag }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="rule-meta-stack">
+                        <div class="rule-meta-card">
+                            <div class="hint">Logsource</div>
+                            <div class="page-note"><strong>product:</strong> {{ rule.logsource_product or 'n/a' }}</div>
+                            <div class="page-note"><strong>service:</strong> {{ rule.logsource_service or 'n/a' }}</div>
+                            {% if rule.logsource_category %}
+                            <div class="page-note"><strong>category:</strong> {{ rule.logsource_category }}</div>
+                            {% endif %}
+                        </div>
+                        <div class="rule-meta-card">
+                            <div class="hint">Threshold</div>
+                            <div class="page-note"><strong>count:</strong> {{ rule.threshold }}</div>
+                            <div class="page-note"><strong>window:</strong> {{ rule.window_s }} sec</div>
+                        </div>
+                    </div>
+                    <div class="rule-meta-stack">
+                        <div class="rule-meta-card">
+                            <div class="hint">Verification</div>
+                            <div class="page-note">24h hits: <strong>{{ rule.match_hits_24h }}</strong></div>
+                            <div class="page-note">Alert rows: <strong>{{ rule.alert_hits_total }}</strong></div>
+                            <div class="page-note">Last alert: <strong>{{ rule.last_alert_ts or 'n/a' }}</strong></div>
+                        </div>
+                        <div class="sql-box mono">{{ rule.verification_query }}</div>
+                    </div>
+                    <div class="rule-actions">
+                        <button type="button" class="btn ghost" data-test-rule="{{ rule.id }}">Test</button>
+                        <a class="btn ghost" href="{{ rule.events_link }}">Open in Events</a>
+                    </div>
+                </article>
+                {% endfor %}
+                {% if not detection_rules %}
+                <div class="empty-box">Detection rule catalog is empty.</div>
+                {% endif %}
+            </div>
         </div>
     </section>
 

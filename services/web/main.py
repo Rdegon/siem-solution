@@ -1,7 +1,7 @@
 """
 main.py
 -------
-????? ????? ??? SIEM Web UI (FastAPI).
+Entry point for the Rdegon SIEM web UI (FastAPI).
 """
 
 from __future__ import annotations
@@ -27,6 +27,9 @@ def create_app() -> FastAPI:
     )
     app.state.instance_name = CONFIG.instance_name
     app.state.env = CONFIG.env
+    app.state.base_url = CONFIG.base_url
+    app.state.hot_retention_hours = CONFIG.hot_retention_hours
+    app.state.cold_retention_days = CONFIG.cold_retention_days
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[CONFIG.base_url],
