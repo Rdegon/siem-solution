@@ -271,6 +271,43 @@
         .chart-bar { border-radius: 12px 12px 5px 5px; background: linear-gradient(180deg, rgba(29, 114, 217, .95), rgba(42, 185, 244, .46)); min-height: 10px; }
         .chart-label, .chart-value { font-size: 11px; color: var(--text-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
         .chart-value { color: var(--text); font-weight: 600; }
+        .timeline-surface {
+            min-height: 250px;
+            border-radius: 18px;
+            background: linear-gradient(180deg, rgba(11, 24, 43, .42), rgba(11, 24, 43, .18));
+            border: 1px solid var(--border);
+            padding: 10px 12px 0;
+        }
+        .timeline-svg {
+            width: 100%;
+            height: 230px;
+            display: block;
+            overflow: visible;
+        }
+        .timeline-axis {
+            stroke: rgba(148, 163, 184, .26);
+            stroke-width: 1;
+        }
+        .timeline-axis-label {
+            fill: var(--text-mute);
+            font: 500 11px var(--font-mono);
+            letter-spacing: .06em;
+        }
+        .timeline-area {
+            fill: url(#timelineFill);
+        }
+        .timeline-line {
+            fill: none;
+            stroke: var(--accent);
+            stroke-width: 3;
+            stroke-linejoin: round;
+            stroke-linecap: round;
+        }
+        .timeline-point {
+            fill: var(--surface-solid);
+            stroke: var(--accent);
+            stroke-width: 2;
+        }
         .mini-list { display: grid; gap: 10px; }
         .mini-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
         .mini-bar-track { height: 10px; border-radius: 999px; background: rgba(148, 163, 184, .16); overflow: hidden; }

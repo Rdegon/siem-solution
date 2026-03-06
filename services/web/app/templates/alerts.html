@@ -1,8 +1,45 @@
-
 {% extends "base.html" %}
 {% block title %}Incidents | Rdegon SIEM{% endblock %}
 {% block page_title %}Incidents and Alerts{% endblock %}
-{% block page_subtitle %}Investigate aggregated incidents and the raw alert queue with direct pivots into the event console.{% endblock %}
+{% block page_subtitle %}Investigate aggregated incidents and the raw alert queue with the same side-drawer workflow used in Event Console.{% endblock %}
+{% block extra_head %}
+<style>
+    .alert-drawer-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(2, 6, 23, 0.52);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .18s ease;
+        z-index: 48;
+    }
+    .alert-drawer-overlay.open { opacity: 1; pointer-events: auto; }
+    .alert-drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        height: 100vh;
+        width: min(560px, 100vw);
+        background: var(--surface-solid);
+        border-left: 1px solid var(--border);
+        box-shadow: -22px 0 48px rgba(15, 23, 42, 0.20);
+        transform: translateX(100%);
+        transition: transform .18s ease;
+        z-index: 49;
+        display: grid;
+        grid-template-rows: auto 1fr;
+    }
+    .alert-drawer.open { transform: translateX(0); }
+    .alert-drawer-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 20px 22px 0;
+    }
+    .alert-drawer-body { padding: 18px 22px 22px; overflow: auto; }
+</style>
+{% endblock %}
 {% block content %}
 <div class="view-stack">
 <div class="grid-4">
@@ -12,11 +49,28 @@
     <section class="kpi"><p class="kpi-label">Critical raw</p><div class="kpi-value">{{ metrics.critical_raw or 0 }}</div><div class="kpi-meta">Critical raw alerts currently present in storage.</div></section>
 </div>
 <section class="panel"><div class="panel-body" style="display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:center;"><div class="chip-row"><a class="chip {% if view == 'agg' %}active{% endif %}" href="/alerts?view=agg">Aggregated incidents</a><a class="chip {% if view == 'raw' %}active{% endif %}" href="/alerts?view=raw">Raw alert queue</a><a class="chip" href="/events?q=message%20ILIKE%20'%25auditd:%25'">Open auditd events</a></div><div class="page-note">Current view: <strong>{{ 'raw alerts' if view == 'raw' else 'aggregated incidents' }}</strong></div></div></section>
-<div class="split">
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Queue</h3><p class="panel-subtitle">Click any incident or alert to inspect its context, assign an analyst, update the lifecycle status, and pivot into Events.</p></div></div><div class="panel-body table-wrap"><table id="alertsTable"><thead>{% if view == 'agg' %}<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Alerts</th><th>Entities</th><th>Status</th><th>Assignee</th></tr>{% else %}<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Source</th><th>Status</th><th>Assignee</th></tr>{% endif %}</thead><tbody>{% if view == 'agg' %}{% for row in alerts_agg %}<tr data-index="{{ loop.index0 }}" class="{% if loop.first %}active{% endif %}"><td class="ts-cell" data-ts="{{ row.ts_last }}">{{ row.ts_last }}</td><td>{{ row.rule_name }}</td><td><span class="severity sev-{{ row.severity_agg }}">{{ row.severity_agg }}</span></td><td>{{ row.count_alerts }}</td><td>{{ row.unique_entities }}</td><td><span class="status-pill">{{ row.status }}</span></td><td>{{ row.assignee or 'unassigned' }}</td></tr>{% endfor %}{% else %}{% for row in alerts_raw %}<tr data-index="{{ loop.index0 }}" class="{% if loop.first %}active{% endif %}"><td class="ts-cell" data-ts="{{ row.ts_last }}">{{ row.ts_last }}</td><td>{{ row.rule_name }}</td><td><span class="severity sev-{{ row.severity }}">{{ row.severity }}</span></td><td>{{ row.hits }}</td><td>{{ row.source }}</td><td><span class="status-pill">{{ row.status }}</span></td><td>{{ row.assignee or 'unassigned' }}</td></tr>{% endfor %}{% endif %}</tbody></table></div></section>
-    <aside class="panel drawer-card"><div class="panel-header"><div><h3 class="panel-title">Details</h3><p class="panel-subtitle">Selected incident or raw alert context.</p></div></div><div class="panel-body" id="alertDrawer"><div class="drawer-empty">Select an item from the queue to see the full context and shortcuts into Events.</div></div></aside>
+<section class="panel">
+    <div class="panel-header"><div><h3 class="panel-title">Queue</h3><p class="panel-subtitle">Click any row to open a side drawer, update lifecycle state, review history, and pivot into Event Console.</p></div></div>
+    <div class="panel-body table-wrap">
+        <table id="alertsTable">
+            <thead id="alertsHead"></thead>
+            <tbody id="alertsBody"></tbody>
+        </table>
+        <div id="alertsEmpty" class="empty-box" style="display:none;">No incidents or alerts are available for the selected view.</div>
+    </div>
+</section>
 </div>
-</div>
+<div class="alert-drawer-overlay" id="alertDrawerOverlay"></div>
+<aside class="alert-drawer" id="alertDrawerPanel" aria-hidden="true">
+    <div class="alert-drawer-header">
+        <div>
+            <h3 class="panel-title">Incident details</h3>
+            <p class="panel-subtitle">Lifecycle, context, and investigation pivots for the selected row.</p>
+        </div>
+        <button class="btn ghost" id="closeAlertDrawerBtn" type="button">Close</button>
+    </div>
+    <div class="alert-drawer-body" id="alertDrawer"><div class="drawer-empty">Click a row in the queue to inspect the incident or alert.</div></div>
+</aside>
 {% endblock %}
 {% block extra_scripts %}
 <script>
@@ -25,10 +79,69 @@ const alertsAgg = {{ alerts_agg | tojson }};
 const alertsRaw = {{ alerts_raw | tojson }};
 const canEditWorkflow = {{ (user.role in ['admin', 'analyst']) | tojson }};
 const rows = mode === 'raw' ? alertsRaw : alertsAgg;
+const alertsHead = document.getElementById('alertsHead');
+const alertsBody = document.getElementById('alertsBody');
+const alertsEmpty = document.getElementById('alertsEmpty');
 const alertDrawer = document.getElementById('alertDrawer');
-const rowNodes = Array.from(document.querySelectorAll('#alertsTable tbody tr'));
-let selectedIndex = rows.length ? 0 : null;
-function eventLinkForRow(row) { if (mode === 'raw' && row.source) return `/events?q=${encodeURIComponent(`log_source = '${row.source}'`)}`; if (row.entity_key) return `/events?q=${encodeURIComponent(`log_source = '${row.entity_key}'`)}`; return `/events?q=${encodeURIComponent(`message ILIKE '%${row.rule_name}%'`)}`; }
+const alertDrawerPanel = document.getElementById('alertDrawerPanel');
+const alertDrawerOverlay = document.getElementById('alertDrawerOverlay');
+const closeAlertDrawerBtn = document.getElementById('closeAlertDrawerBtn');
+let selectedIndex = null;
+function rowKey(row) {
+    return mode === 'raw' ? String(row.alert_id) : String(row.agg_id);
+}
+function eventLinkForRow(row) {
+    if (mode === 'raw' && row.source) return `/events?q=${encodeURIComponent(`log_source = '${row.source}'`)}`;
+    if (row.entity_key) return `/events?q=${encodeURIComponent(`log_source = '${row.entity_key}'`)}`;
+    return `/events?q=${encodeURIComponent(`message ILIKE '%${row.rule_name}%'`)}`;
+}
+function openDrawer() {
+    alertDrawerPanel.classList.add('open');
+    alertDrawerOverlay.classList.add('open');
+    alertDrawerPanel.setAttribute('aria-hidden', 'false');
+}
+function closeDrawer() {
+    alertDrawerPanel.classList.remove('open');
+    alertDrawerOverlay.classList.remove('open');
+    alertDrawerPanel.setAttribute('aria-hidden', 'true');
+}
+function renderTable() {
+    if (mode === 'agg') {
+        alertsHead.innerHTML = '<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Alerts</th><th>Entities</th><th>Status</th><th>Assignee</th></tr>';
+        alertsBody.innerHTML = rows.map((row, index) => `
+            <tr data-index="${index}" class="${selectedIndex === index ? 'active' : ''}">
+                <td class="ts-cell">${escapeHtml(formatDisplayTimestamp(row.ts_last))}</td>
+                <td>${escapeHtml(row.rule_name)}</td>
+                <td><span class="severity ${severityClass(row.severity_agg)}">${escapeHtml(row.severity_agg)}</span></td>
+                <td>${Number(row.count_alerts || 0)}</td>
+                <td>${Number(row.unique_entities || 0)}</td>
+                <td><span class="status-pill">${escapeHtml(row.status)}</span></td>
+                <td>${escapeHtml(row.assignee || 'unassigned')}</td>
+            </tr>
+        `).join('');
+    } else {
+        alertsHead.innerHTML = '<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Source</th><th>Status</th><th>Assignee</th></tr>';
+        alertsBody.innerHTML = rows.map((row, index) => `
+            <tr data-index="${index}" class="${selectedIndex === index ? 'active' : ''}">
+                <td class="ts-cell">${escapeHtml(formatDisplayTimestamp(row.ts_last))}</td>
+                <td>${escapeHtml(row.rule_name)}</td>
+                <td><span class="severity ${severityClass(row.severity)}">${escapeHtml(row.severity)}</span></td>
+                <td>${Number(row.hits || 0)}</td>
+                <td class="table-code">${escapeHtml(row.source || row.entity_key || '')}</td>
+                <td><span class="status-pill">${escapeHtml(row.status)}</span></td>
+                <td>${escapeHtml(row.assignee || 'unassigned')}</td>
+            </tr>
+        `).join('');
+    }
+    alertsEmpty.style.display = rows.length ? 'none' : 'block';
+    alertsBody.querySelectorAll('tr').forEach((node) => {
+        node.addEventListener('click', () => {
+            selectedIndex = Number(node.dataset.index);
+            renderTable();
+            renderDrawer(rows[selectedIndex]);
+        });
+    });
+}
 async function saveAssignment(row, statusValue, assigneeValue, noteValue) {
     const recordId = mode === 'raw' ? row.alert_id : row.agg_id;
     const response = await fetch(`/api/alerts/${mode}/${recordId}`, {
@@ -38,10 +151,11 @@ async function saveAssignment(row, statusValue, assigneeValue, noteValue) {
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Update failed');
-    row.status = statusValue;
-    row.assignee = assigneeValue;
+    row.status = payload.status || statusValue;
+    row.assignee = payload.assignee || assigneeValue;
     row.updated_ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    activateRow(selectedIndex);
+    renderTable();
+    renderDrawer(row);
 }
 async function loadHistory(row) {
     const recordId = mode === 'raw' ? row.alert_id : row.agg_id;
@@ -68,7 +182,7 @@ async function loadHistory(row) {
 }
 function renderDrawer(row) {
     if (!row) {
-        alertDrawer.innerHTML = '<div class="drawer-empty">Select an item from the queue to see the full context and shortcuts into Events.</div>';
+        alertDrawer.innerHTML = '<div class="drawer-empty">Click a row in the queue to inspect the incident or alert.</div>';
         return;
     }
     const contextBlock = mode === 'raw' ? row.context_json : row.group_key_json;
@@ -117,10 +231,10 @@ function renderDrawer(row) {
             }
         });
     }
+    openDrawer();
 }
-function activateRow(index) { selectedIndex = index; rowNodes.forEach((node, idx) => node.classList.toggle('active', idx === index)); renderDrawer(rows[index] || null); }
-rowNodes.forEach((node, index) => node.addEventListener('click', () => activateRow(index)));
-applyTimestampFormatting(document);
-if (selectedIndex !== null) activateRow(selectedIndex); else renderDrawer(null);
+closeAlertDrawerBtn.addEventListener('click', closeDrawer);
+alertDrawerOverlay.addEventListener('click', closeDrawer);
+renderTable();
 </script>
 {% endblock %}

@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from functools import lru_cache
 import re
+from time import perf_counter
 from typing import Any, Dict, List
 from urllib.parse import quote
 
@@ -14,7 +15,7 @@ import yaml
 from .config import CONFIG
 
 
-EVENT_ROW_LIMIT_DEFAULT = 250
+EVENT_ROW_LIMIT_DEFAULT = 100
 EVENT_ROW_LIMIT_MAX = 1000
 EVENT_WINDOWS = {
     '15m': "now() - INTERVAL 15 MINUTE",
@@ -222,17 +223,7 @@ def _validate_read_only_sql(raw_query: str) -> str:
     return query
 
 
-def _ensure_limit(sql: str, limit: int) -> str:
-    match = LIMIT_RE.search(sql)
-    if not match:
-        return f"{sql}\nLIMIT {limit}"
-    current = int(match.group(1))
-    if current <= limit:
-        return sql
-    return LIMIT_RE.sub(f"LIMIT {limit}", sql, count=1)
-
-
-def _resolve_select_query(raw_query: str, limit: int, storage: str) -> str:
+def _resolve_select_query(raw_query: str, storage: str) -> str:
     query = _validate_read_only_sql(raw_query)
     view_sql = _event_view_sql(storage)
     if 'events_view' in query.lower():
@@ -243,17 +234,16 @@ def _resolve_select_query(raw_query: str, limit: int, storage: str) -> str:
         raise ValueError('SELECT query must include a FROM clause')
     if resolved == query and 'events_view' not in query.lower() and 'siem.events' not in query.lower():
         raise ValueError("Read-only SELECT must query from events_view or siem.events")
-    return _ensure_limit(resolved, limit)
+    return resolved
 
 
-def _build_events_sql(query_text: str, window: str, limit: int, storage: str = 'hot') -> str:
-    limit = max(1, min(limit, EVENT_ROW_LIMIT_MAX))
+def _build_events_base_sql(query_text: str, window: str, storage: str = 'hot') -> str:
     storage = storage if storage in {'hot', 'cold', 'all'} else 'hot'
     query_text = (query_text or '').strip()
     if not query_text:
         expression = '1'
     elif FULL_SQL_RE.match(query_text):
-        return _resolve_select_query(query_text, limit, storage)
+        return _resolve_select_query(query_text, storage)
     elif _looks_like_expression(query_text):
         expression = _validate_read_only_sql(query_text)
     else:
@@ -288,7 +278,15 @@ def _build_events_sql(query_text: str, window: str, limit: int, storage: str = '
         f"WHERE {_event_time_filter(window)}\n"
         f"  AND ({expression})\n"
         f"ORDER BY ts DESC\n"
-        f"LIMIT {limit}"
+    )
+
+
+def _paginate_sql(sql: str, limit: int, offset: int) -> str:
+    return (
+        f"SELECT *\n"
+        f"FROM ({sql}) AS page_view\n"
+        f"LIMIT {limit}\n"
+        f"OFFSET {offset}"
     )
 
 
@@ -334,16 +332,38 @@ def _source_stats(rows: List[Dict[str, Any]], limit: int = 8) -> List[Dict[str, 
     return [{'label': key, 'count': value} for key, value in counts.most_common(limit)]
 
 
-def execute_event_query(query_text: str, window: str = '24h', limit: int = EVENT_ROW_LIMIT_DEFAULT, storage: str = 'hot') -> Dict[str, Any]:
-    sql = _build_events_sql(query_text=query_text, window=window, limit=limit, storage=storage)
+def execute_event_query(
+    query_text: str,
+    window: str = '24h',
+    limit: int = EVENT_ROW_LIMIT_DEFAULT,
+    storage: str = 'hot',
+    offset: int = 0,
+) -> Dict[str, Any]:
+    started_at = perf_counter()
+    limit = max(1, min(int(limit or EVENT_ROW_LIMIT_DEFAULT), EVENT_ROW_LIMIT_MAX))
+    offset = max(0, int(offset or 0))
+    base_sql = _build_events_base_sql(query_text=query_text, window=window, storage=storage)
+    sql = _paginate_sql(base_sql, limit=limit, offset=offset)
+    total_count = int(_scalar(f"SELECT count() FROM ({base_sql}) AS count_view"))
     result = _rows_from_query(sql)
     rows = result['rows']
+    total_pages = max(1, (total_count + limit - 1) // limit) if total_count else 1
+    current_page = min(total_pages, (offset // limit) + 1) if total_count else 1
     return {
         'sql': sql,
+        'base_sql': base_sql,
         'storage': storage,
         'columns': result['columns'],
         'rows': rows,
         'row_count': len(rows),
+        'total_count': total_count,
+        'limit': limit,
+        'offset': offset,
+        'page': current_page,
+        'total_pages': total_pages,
+        'has_prev_page': current_page > 1,
+        'has_next_page': offset + len(rows) < total_count,
+        'elapsed_ms': int((perf_counter() - started_at) * 1000),
         'histogram': _bucket_rows(rows, bucket_minutes=15),
         'severity_stats': _severity_stats(rows),
         'source_stats': _source_stats(rows),

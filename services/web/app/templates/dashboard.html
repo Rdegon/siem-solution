@@ -18,7 +18,7 @@
     </section>
     <section class="panel">
         <div class="panel-header"><div><h3 class="panel-title">Event volume</h3><p class="panel-subtitle">Last 24 hours, one-hour buckets.</p></div></div>
-        <div class="panel-body"><div id="dashboardTimeline" class="chart-bars compact"></div></div>
+        <div class="panel-body"><div id="dashboardTimeline" class="timeline-surface"></div><div id="dashboardTimelineMeta" class="page-note" style="margin-top:12px;"></div></div>
     </section>
 </div>
 <div class="grid-3">
@@ -39,17 +39,56 @@ const severityRows = {{ severity_breakdown | tojson }}.map((row) => ({ label: ro
 const alertSeverityRows = {{ alert_severity_breakdown | tojson }}.map((row) => ({ label: row.severity, count: row.cnt }));
 const alertStatusRows = {{ alert_status_breakdown | tojson }}.map((row) => ({ label: row.status, count: row.cnt }));
 const timelineContainer = document.getElementById('dashboardTimeline');
+const timelineMeta = document.getElementById('dashboardTimelineMeta');
 function renderDashboardTimeline() {
     if (!timelineContainer) return;
-    const maxValue = Math.max(...timeline.map((item) => Number(item.cnt || 0)), 1);
-    timelineContainer.innerHTML = timeline.map((item, index) => {
-        const count = Number(item.cnt || 0);
-        const height = Math.max(8, Math.round((count / maxValue) * 180));
-        const showLabel = index % 4 === 0 || index === timeline.length - 1;
-        const formatted = formatDisplayTimestamp(item.bucket || '');
-        const label = showLabel ? formatted.slice(11, 16) : '&nbsp;';
-        return `<div class="chart-col compact"><div class="chart-value">${count}</div><div class="chart-bar" style="height:${height}px"></div><div class="chart-label">${label}</div></div>`;
+    if (!timeline.length) {
+        timelineContainer.innerHTML = '<div class="page-note">No event volume data.</div>';
+        if (timelineMeta) timelineMeta.textContent = '';
+        return;
+    }
+    const width = 760;
+    const height = 220;
+    const paddingX = 18;
+    const paddingTop = 16;
+    const paddingBottom = 44;
+    const innerHeight = height - paddingTop - paddingBottom;
+    const innerWidth = width - (paddingX * 2);
+    const counts = timeline.map((item) => Number(item.cnt || 0));
+    const maxValue = Math.max(...counts, 1);
+    const points = timeline.map((item, index) => {
+        const x = paddingX + ((innerWidth) * (timeline.length === 1 ? 0 : index / (timeline.length - 1)));
+        const y = paddingTop + innerHeight - ((Number(item.cnt || 0) / maxValue) * innerHeight);
+        return { x, y, count: Number(item.cnt || 0), bucket: item.bucket || '' };
+    });
+    const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
+    const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${(height - paddingBottom).toFixed(2)} L ${points[0].x.toFixed(2)} ${(height - paddingBottom).toFixed(2)} Z`;
+    const labels = points.map((point, index) => {
+        const showLabel = index % 4 === 0 || index === points.length - 1;
+        if (!showLabel) return '';
+        const label = formatDisplayTimestamp(point.bucket).slice(11, 16);
+        return `<text x="${point.x.toFixed(2)}" y="${(height - 14).toFixed(2)}" text-anchor="middle" class="timeline-axis-label">${escapeHtml(label)}</text>`;
     }).join('');
+    const circles = points.map((point) => `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4" class="timeline-point"><title>${escapeHtml(formatDisplayTimestamp(point.bucket))}: ${point.count}</title></circle>`).join('');
+    timelineContainer.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" class="timeline-svg" aria-label="Event volume chart" preserveAspectRatio="none">
+            <defs>
+                <linearGradient id="timelineFill" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stop-color="rgba(75,147,255,0.40)"></stop>
+                    <stop offset="100%" stop-color="rgba(75,147,255,0.02)"></stop>
+                </linearGradient>
+            </defs>
+            <line x1="${paddingX}" y1="${height - paddingBottom}" x2="${width - paddingX}" y2="${height - paddingBottom}" class="timeline-axis"></line>
+            <path d="${areaPath}" class="timeline-area"></path>
+            <path d="${linePath}" class="timeline-line"></path>
+            ${circles}
+            ${labels}
+        </svg>
+    `;
+    if (timelineMeta) {
+        const total = counts.reduce((sum, value) => sum + value, 0);
+        timelineMeta.textContent = `Total ${total} events, peak ${maxValue} per hour, latest bucket ${formatDisplayTimestamp(points[points.length - 1].bucket)}.`;
+    }
 }
 function renderLegend(containerId, rows) {
     const container = document.getElementById(containerId);

@@ -42,7 +42,8 @@ async def events_query_api(payload: dict = Body(default={}), user=Depends(get_cu
     window = str(payload.get('window', '24h') or '24h')
     storage = str(payload.get('storage', 'hot') or 'hot')
     limit = int(payload.get('limit', EVENT_ROW_LIMIT_DEFAULT) or EVENT_ROW_LIMIT_DEFAULT)
+    offset = int(payload.get('offset', 0) or 0)
     try:
-        return JSONResponse(execute_event_query(query_text=query_text, window=window, limit=limit, storage=storage))
+        return JSONResponse(execute_event_query(query_text=query_text, window=window, limit=limit, storage=storage, offset=offset))
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({'error': str(exc)}, status_code=400)
