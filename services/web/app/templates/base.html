@@ -234,7 +234,8 @@
         .kpi-label { margin: 0; color: var(--text-mute); font: 500 11px var(--font-mono); text-transform: uppercase; letter-spacing: .18em; }
         .kpi-value { margin: 12px 0 8px; font: 700 34px/1 var(--font-display); }
         .kpi-meta { color: var(--text-soft); font-size: 13px; line-height: 1.45; }
-        .toolbar { display: grid; gap: 12px; grid-template-columns: minmax(0, 2.2fr) repeat(4, minmax(120px, .6fr)); align-items: end; }
+        .toolbar { display: grid; gap: 12px; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: end; }
+        .query-editor { grid-column: 1 / -1; }
         .split { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(360px, .95fr); gap: 18px; align-items: start; }
         .results-layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(360px, .95fr); gap: 18px; align-items: start; }
         .stack-rail { display: grid; gap: 18px; }
@@ -301,7 +302,7 @@
             .split, .results-layout { grid-template-columns: 1fr; }
             .drawer-card { position: static; max-height: none; }
             .drawer-card .panel-body { max-height: none; }
-            .toolbar { grid-template-columns: 1fr 1fr; }
+            .toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         @media (max-width: 960px) {
             .app-sidebar { transform: translateX(-100%); }
@@ -396,9 +397,8 @@
             return ['critical', 'high', 'medium', 'low', 'info'].includes(sev) ? 'sev-' + sev : 'sev-info';
         }
         function downloadTsv(filename, headers, rows) {
-            const lines = [headers.join('	')].concat(rows.map((row) => headers.map((key) => String(row[key] ?? '')).join('	')));
-            const blob = new Blob([lines.join('
-')], { type: 'text/tab-separated-values;charset=utf-8' });
+            const lines = [headers.join('\t')].concat(rows.map((row) => headers.map((key) => String(row[key] ?? '')).join('\t')));
+            const blob = new Blob([lines.join('\n')], { type: 'text/tab-separated-values;charset=utf-8' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
             link.download = filename;

@@ -64,6 +64,8 @@ FORBIDDEN_SQL_RE = re.compile(
 COMMENT_SQL_RE = re.compile(r"(--|/\*|\*/)")
 FULL_SQL_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 LIMIT_RE = re.compile(r"\blimit\s+(\d+)\b", re.IGNORECASE)
+EVENT_VIEW_FROM_RE = re.compile(r"\b(from|join)\s+events_view\b", re.IGNORECASE)
+EVENT_TABLE_FROM_RE = re.compile(r"\b(from|join)\s+siem\.events\b", re.IGNORECASE)
 
 
 @lru_cache(maxsize=1)
@@ -178,11 +180,13 @@ def _ensure_limit(sql: str, limit: int) -> str:
 def _resolve_select_query(raw_query: str, limit: int) -> str:
     query = _validate_read_only_sql(raw_query)
     if 'events_view' in query.lower():
-        resolved = re.sub(r"events_view", f"({EVENT_VIEW_SQL}) AS events_view", query, flags=re.IGNORECASE)
+        resolved = EVENT_VIEW_FROM_RE.sub(rf"\1 ({EVENT_VIEW_SQL}) AS events_view", query)
     else:
-        resolved = re.sub(r"siem\.events", f"({EVENT_VIEW_SQL}) AS events_view", query, flags=re.IGNORECASE)
+        resolved = EVENT_TABLE_FROM_RE.sub(rf"\1 ({EVENT_VIEW_SQL}) AS events_view", query)
     if ' from ' not in resolved.lower():
         raise ValueError('SELECT query must include a FROM clause')
+    if resolved == query and 'events_view' not in query.lower() and 'siem.events' not in query.lower():
+        raise ValueError("Read-only SELECT must query from events_view or siem.events")
     return _ensure_limit(resolved, limit)
 
 
