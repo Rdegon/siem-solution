@@ -63,15 +63,15 @@
             <div class="panel-header">
                 <div>
                     <h3 class="panel-title">{{ t['doc.quickstart'] }}</h3>
-                    <p class="panel-subtitle">Use these sections as the analyst-facing internal knowledge base of the product.</p>
+                    <p class="panel-subtitle">{{ t['doc.quickstart.subtitle'] }}</p>
                 </div>
             </div>
             <div class="panel-body">
                 <div class="kv-list">
-                    <div class="kv"><div class="kv-key">1</div><div class="kv-value">Start from <strong>Dashboards</strong> for global posture and from <strong>Incidents</strong> for active triage.</div></div>
-                    <div class="kv"><div class="kv-key">2</div><div class="kv-value">Use <strong>Events</strong> for pivot search, raw validation, and timeline reconstruction.</div></div>
-                    <div class="kv"><div class="kv-key">3</div><div class="kv-value">Use <strong>Sources</strong> and <strong>Collectors</strong> to validate telemetry health before trusting absence of evidence.</div></div>
-                    <div class="kv"><div class="kv-key">4</div><div class="kv-value">Use <strong>Assets</strong> to maintain CMDB, TI, active lists, detections, and future normalizer content.</div></div>
+                    <div class="kv"><div class="kv-key">1</div><div class="kv-value">{{ t['doc.quickstart.1'] }}</div></div>
+                    <div class="kv"><div class="kv-key">2</div><div class="kv-value">{{ t['doc.quickstart.2'] }}</div></div>
+                    <div class="kv"><div class="kv-key">3</div><div class="kv-value">{{ t['doc.quickstart.3'] }}</div></div>
+                    <div class="kv"><div class="kv-key">4</div><div class="kv-value">{{ t['doc.quickstart.4'] }}</div></div>
                 </div>
             </div>
         </aside>
@@ -84,7 +84,7 @@
                     <p class="panel-subtitle">{{ playbook.summary }}</p>
                 </div>
                 <div>
-                    <div class="hint">Sources</div>
+                    <div class="hint">{{ t['doc.sources'] }}</div>
                     <div class="chip-row">
                         {% for source in playbook.sources %}
                         <span class="chip">{{ source }}</span>
@@ -92,7 +92,7 @@
                     </div>
                 </div>
                 <div>
-                    <div class="hint">Steps</div>
+                    <div class="hint">{{ t['doc.steps'] }}</div>
                     <ol class="step-list">
                         {% for step in playbook.steps %}
                         <li>{{ step }}</li>

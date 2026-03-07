@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import re
@@ -85,6 +86,11 @@ HIGH_RISK_EVENT_TYPES = {
 MEDIUM_RISK_EVENT_TYPES = {
     "audit_user_login_failure",
     "audit_user_auth_failure",
+    "linux_accounts_modified",
+    "linux_audit_tool_execution",
+    "linux_common_service_port_connection",
+    "linux_credentials_in_files",
+    "linux_dbus_send",
     "linux_user_created",
     "linux_user_deleted",
     "linux_user_added_to_admin_group",
@@ -92,12 +98,71 @@ MEDIUM_RISK_EVENT_TYPES = {
     "linux_cron_modified",
     "linux_audit_config_changed",
     "linux_audit_rules_cleared",
+    "linux_network_connections_discovery",
+    "linux_network_configuration_discovery",
+    "linux_process_discovery",
+    "linux_remote_access_tool",
+    "linux_remote_services_discovery",
+    "linux_shell_execute",
+    "linux_sysctl_modified",
+    "linux_system_information_discovery",
+    "linux_system_owner_user_discovery",
+    "linux_valid_accounts_discovery",
     "linux_download_utility",
     "linux_network_tool",
     "linux_packet_capture",
     "linux_exec_from_tmp",
     "linux_system_recon",
     "linux_passwd_shadow_access",
+}
+HIGH_RISK_EVENT_TYPES.update(
+    {
+        "linux_binary_modified",
+        "linux_init_system_modified",
+        "linux_kernel_module_modified",
+        "linux_library_modified",
+        "linux_pkexec_execution",
+        "linux_privilege_escalation_file_modified",
+        "linux_privilege_escalation_tool",
+        "linux_rsyslog_config_modified",
+        "linux_sshd_config_modified",
+    }
+)
+AUDIT_KEY_SHAPES = {
+    "account_discovery": ("discovery", "recon", "linux_account_discovery"),
+    "accounts_modify": ("identity", "account_modify", "linux_accounts_modified"),
+    "audit_config": ("defense_evasion", "audit_config_change", "linux_audit_config_changed"),
+    "audit_tools": ("defense_evasion", "audit_tool_execution", "linux_audit_tool_execution"),
+    "bin_modify": ("defense_evasion", "file_modify", "linux_binary_modified"),
+    "commonly_used_port": ("network", "connection_attempt", "linux_common_service_port_connection"),
+    "credentials_in_files": ("credential", "file_access", "linux_credentials_in_files"),
+    "cron": ("persistence", "scheduled_task_modify", "linux_cron_modified"),
+    "dbus_send": ("execution", "dbus_send", "linux_dbus_send"),
+    "init_modify": ("persistence", "service_unit_modify", "linux_init_system_modified"),
+    "kernel_modules": ("defense_evasion", "module_modify", "linux_kernel_module_modified"),
+    "lib_modify": ("defense_evasion", "file_modify", "linux_library_modified"),
+    "lib_preloads_modify": ("defense_evasion", "preload_modify", "linux_ld_preload_modified"),
+    "pkexec": ("privilege", "pkexec", "linux_pkexec_execution"),
+    "priv_esc": ("privilege", "execute_as_root", "linux_privilege_escalation_tool"),
+    "priv_esc_file": ("privilege", "file_modify", "linux_privilege_escalation_file_modified"),
+    "priv_esc_sudo_cache": ("privilege", "sudo_cache_modify", "linux_sudo_cache_modified"),
+    "process_discovery": ("discovery", "recon", "linux_process_discovery"),
+    "recon_execute": ("discovery", "recon", "linux_system_recon"),
+    "remote_access_tools": ("command_and_control", "remote_access_tool", "linux_remote_access_tool"),
+    "remote_services_discovery": ("discovery", "recon", "linux_remote_services_discovery"),
+    "root_execute": ("privilege", "execute_as_root", "linux_exec_as_root"),
+    "rsyslog_config": ("defense_evasion", "service_config_modify", "linux_rsyslog_config_modified"),
+    "setuid_and_setgid": ("privilege", "setuid_modify", "linux_setuid_bit_modified"),
+    "shell_execute": ("execution", "shell_execute", "linux_shell_execute"),
+    "sshd_config": ("defense_evasion", "service_config_modify", "linux_sshd_config_modified"),
+    "sysctl": ("defense_evasion", "kernel_param_modify", "linux_sysctl_modified"),
+    "system_information_discovery": ("discovery", "recon", "linux_system_information_discovery"),
+    "system_network_configuration_discovery": ("discovery", "recon", "linux_network_configuration_discovery"),
+    "system_network_connections_discovery": ("discovery", "recon", "linux_network_connections_discovery"),
+    "system_owner_user_discovery": ("discovery", "recon", "linux_system_owner_user_discovery"),
+    "t1166_seuid_and_setgid": ("privilege", "setuid_modify", "linux_setuid_bit_modified"),
+    "tmp_execute": ("execution", "exec_tmp", "linux_exec_from_tmp"),
+    "valid_accounts": ("discovery", "recon", "linux_valid_accounts_discovery"),
 }
 
 
@@ -191,6 +256,40 @@ def _decode_hex(value: str) -> str:
     return decoded or raw
 
 
+def _normalize_audit_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", _clean_value(value).lower()).strip("_")
+
+
+def _decode_audit_sockaddr(value: str) -> Dict[str, str]:
+    raw = _clean_value(value).replace("0x", "")
+    if not raw or len(raw) % 2 != 0 or not re.fullmatch(r"[0-9A-Fa-f]+", raw):
+        return {}
+    try:
+        data = bytes.fromhex(raw)
+    except Exception:
+        return {}
+    if len(data) < 8:
+        return {}
+    family = int.from_bytes(data[0:2], "little")
+    if family == 2 and len(data) >= 8:
+        try:
+            return {
+                "destination.ip": str(ipaddress.IPv4Address(data[4:8])),
+                "destination.port": str(int.from_bytes(data[2:4], "big")),
+            }
+        except Exception:
+            return {}
+    if family == 10 and len(data) >= 24:
+        try:
+            return {
+                "destination.ip": str(ipaddress.IPv6Address(data[8:24])),
+                "destination.port": str(int.from_bytes(data[2:4], "big")),
+            }
+        except Exception:
+            return {}
+    return {}
+
+
 def _merge_non_empty(target: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in updates.items():
         if value in (None, "", [], {}, "?"):
@@ -267,6 +366,28 @@ def _set_event_shape(result: Dict[str, Any], *, category: str, action: str, even
     result["event.type"] = event_type
 
 
+def _apply_audit_key_shape(result: Dict[str, Any], audit_key: str) -> None:
+    normalized_key = _normalize_audit_key(audit_key)
+    shape = AUDIT_KEY_SHAPES.get(normalized_key)
+    if not shape:
+        return
+    current_type = _clean_value(result.get("event.type", ""))
+    should_override = (
+        not current_type
+        or current_type.startswith("audit_")
+        or current_type
+        in {
+            "linux_download_utility",
+            "linux_network_tool",
+            "linux_packet_capture",
+            "linux_system_recon",
+        }
+    )
+    if not should_override and shape[2] != current_type:
+        return
+    _set_event_shape(result, category=shape[0], action=shape[1], event_type=shape[2])
+
+
 def _classify_file_path_event(result: Dict[str, Any], path_value: str) -> None:
     path_lower = _clean_value(path_value).lower()
     if not path_lower:
@@ -335,8 +456,18 @@ def _classify_execve_activity(result: Dict[str, Any]) -> None:
         _set_event_shape(result, category="command_and_control", action="download", event_type="linux_download_utility")
     elif executable in {"nc", "ncat", "socat"}:
         _set_event_shape(result, category="command_and_control", action="network_tool", event_type="linux_network_tool")
+    elif executable in {"dbus-send"}:
+        _set_event_shape(result, category="execution", action="dbus_send", event_type="linux_dbus_send")
+    elif executable in {"pkexec"}:
+        _set_event_shape(result, category="privilege", action="pkexec", event_type="linux_pkexec_execution")
     elif executable in {"tcpdump", "tshark"}:
         _set_event_shape(result, category="discovery", action="sniff", event_type="linux_packet_capture")
+    elif executable in {"modprobe", "insmod", "rmmod"}:
+        _set_event_shape(result, category="defense_evasion", action="module_modify", event_type="linux_kernel_module_modified")
+    elif executable in {"lsmod"}:
+        _set_event_shape(result, category="discovery", action="recon", event_type="linux_system_recon")
+    elif executable in {"sysctl"}:
+        _set_event_shape(result, category="defense_evasion", action="kernel_param_modify", event_type="linux_sysctl_modified")
     elif executable in {"setcap", "setfattr"}:
         _set_event_shape(result, category="privilege", action="capability_modify", event_type="linux_file_capability_modified")
     elif executable == "chmod" and (" u+s" in f" {command_lower} " or " g+s" in f" {command_lower} " or " 4755 " in f" {command_lower} "):
@@ -373,6 +504,7 @@ def _parse_auditd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
     file_path = values.get("name", "")
     cwd = values.get("cwd", "")
     command_line = _extract_execve_command(values, _decode_hex(command_hex) or _decode_hex(proctitle_hex))
+    process_name = values.get("comm", "") or base.get("process.name", "") or _basename(exe)
 
     event_category = "audit"
     event_action = "audit"
@@ -429,8 +561,10 @@ def _parse_auditd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
         "user.target.name": "",
         "source.ip": addr if _is_ipv4(addr) else "",
         "source.port": values.get("src", ""),
+        "destination.ip": "",
+        "destination.port": values.get("dport", "") or values.get("dest", ""),
         "process.executable": exe,
-        "process.name": values.get("comm", "") or base.get("process.name", ""),
+        "process.name": process_name,
         "process.command_line": command_line,
         "process.working_directory": cwd,
         "process.tty": values.get("terminal", "") or values.get("tty", ""),
@@ -439,10 +573,14 @@ def _parse_auditd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
         "file.type": values.get("nametype", ""),
         "host.name": audit_hostname or base.get("host.name", ""),
     }
+    _merge_non_empty(result, _decode_audit_sockaddr(values.get("saddr", "")))
     if event_type_raw == "PATH":
         _classify_file_path_event(result, file_path)
     if event_type_raw in {"EXECVE", "SYSCALL", "PROCTITLE"}:
         _classify_execve_activity(result)
+    if result.get("event.type", "").startswith("audit_") and result.get("destination.port") and values.get("syscall") in {"42", "connect"}:
+        _set_event_shape(result, category="network", action="connection_attempt", event_type="linux_network_connection")
+    _apply_audit_key_shape(result, audit_key)
     result["event.severity"] = _derive_severity("auditd", result["event.type"], outcome, str(base.get("log.level", "info")))
     return result
 

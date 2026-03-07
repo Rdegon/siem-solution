@@ -1,0 +1,60 @@
+-b 8192
+-f 1
+
+-w /etc/sudoers -p wa -k scope
+-w /etc/sudoers.d/ -p wa -k scope
+-w /etc/passwd -p wa -k Accounts_Modify
+-w /etc/group -p wa -k Accounts_Modify
+-w /etc/shadow -p wa -k Accounts_Modify
+-w /etc/gshadow -p wa -k Accounts_Modify
+-w /etc/ssh/sshd_config -p wa -k sshd_config
+-w /etc/audit/ -p wa -k audit_config
+-w /etc/audit/rules.d/ -p wa -k audit_config
+-w /etc/rsyslog.conf -p wa -k rsyslog_config
+-w /etc/rsyslog.d/ -p wa -k rsyslog_config
+-w /etc/ld.so.preload -p wa -k lib_preloads_modify
+-w /etc/systemd/system/ -p wa -k init_modify
+-w /usr/lib/systemd/system/ -p wa -k init_modify
+-w /lib/systemd/system/ -p wa -k init_modify
+-w /etc/sysctl.conf -p wa -k sysctl
+-w /etc/sysctl.d/ -p wa -k sysctl
+-w /etc/crontab -p wa -k cron
+-w /etc/cron.allow -p wa -k cron
+-w /etc/cron.deny -p wa -k cron
+-w /etc/cron.d/ -p wa -k cron
+-w /etc/cron.daily/ -p wa -k cron
+-w /etc/cron.hourly/ -p wa -k cron
+-w /etc/cron.monthly/ -p wa -k cron
+-w /etc/cron.weekly/ -p wa -k cron
+-w /var/spool/cron/ -p wa -k cron
+-w /root/.ssh/authorized_keys -p wa -k ssh
+-w /home/rdegon/.ssh/authorized_keys -p wa -k ssh
+-w /etc/ufw/ -p wa -k firewall
+-w /etc/firewalld/ -p wa -k firewall
+-w /etc/modprobe.conf -p wa -k Kernel_Modules
+-w /etc/modprobe.d/ -p wa -k Kernel_Modules
+-w /etc/modules -p wa -k Kernel_Modules
+-w /etc/modules-load.d/ -p wa -k Kernel_Modules
+
+-a always,exit -F arch=b64 -S execve -F auid>=1000 -F auid!=4294967295 -k user_exec
+-a always,exit -F arch=b32 -S execve -F auid>=1000 -F auid!=4294967295 -k user_exec
+-a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=4294967295 -k exec_as_root
+-a always,exit -F arch=b32 -S execve -F euid=0 -F auid>=1000 -F auid!=4294967295 -k exec_as_root
+
+-w /usr/bin/pkexec -p x -k pkexec
+-w /bin/pkexec -p x -k pkexec
+-w /usr/bin/dbus-send -p x -k dbus_send
+-w /bin/dbus-send -p x -k dbus_send
+-w /usr/bin/nc -p x -k Remote_Access_Tools
+-w /bin/nc -p x -k Remote_Access_Tools
+-w /usr/bin/ncat -p x -k Remote_Access_Tools
+-w /bin/ncat -p x -k Remote_Access_Tools
+-w /usr/bin/netcat -p x -k Remote_Access_Tools
+-w /bin/netcat -p x -k Remote_Access_Tools
+-w /usr/bin/socat -p x -k Remote_Access_Tools
+-w /bin/socat -p x -k Remote_Access_Tools
+-w /usr/bin/telnet -p x -k Remote_Access_Tools
+-w /bin/telnet -p x -k Remote_Access_Tools
+
+-a always,exit -F arch=b64 -S connect -F auid>=1000 -F auid!=4294967295 -k Commonly_Used_Port
+-a always,exit -F arch=b32 -S connect -F auid>=1000 -F auid!=4294967295 -k Commonly_Used_Port

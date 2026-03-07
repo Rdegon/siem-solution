@@ -24,6 +24,7 @@ router = APIRouter()
 async def alerts_page(
     request: Request,
     view: str = Query('agg'),
+    focus: str = Query(''),
     user=Depends(get_current_user),
 ) -> HTMLResponse:
     error = None
@@ -46,6 +47,7 @@ async def alerts_page(
             alerts_raw=alerts_raw,
             metrics=metrics,
             view='raw' if view == 'raw' else 'agg',
+            focus=focus,
             status_transitions={key: sorted(values) for key, values in INCIDENT_STATUS_TRANSITIONS.items()},
             error=error,
         ),

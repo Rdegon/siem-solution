@@ -129,7 +129,7 @@
         }
         .brand-toggle { color: var(--sidebar-text); background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.10); }
         .brand-toggle:hover, .topbar-icon:hover, .theme-toggle:hover, .timezone-toggle:hover { transform: translateY(-1px); }
-        .btn-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+        .btn-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
         .sidebar-brand h1 { margin: 0; font: 700 26px/1 var(--font-display); letter-spacing: -.04em; }
         .sidebar-brand p { margin: 0; color: var(--sidebar-soft); font-size: 13px; line-height: 1.5; }
         body[data-sidebar="collapsed"] .sidebar-brand h1,
@@ -188,13 +188,33 @@
         .page-heading h2 { margin: 0; font: 700 36px/1 var(--font-display); letter-spacing: -.05em; }
         .page-heading p { margin: 0; color: var(--text-soft); font-size: 15px; line-height: 1.55; max-width: 940px; }
         .topbar-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+        .topbar-control {
+            min-height: 44px;
+            padding: 0 14px;
+            gap: 10px;
+            white-space: nowrap;
+        }
+        .control-value {
+            font-size: 13px;
+            font-weight: 700;
+            max-width: 168px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
         .view-stack { display: grid; gap: 18px; }
         .badge {
             display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 7px 12px;
             font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
             background: var(--surface-soft); border: 1px solid var(--border); color: var(--text-soft);
         }
+        .badge.with-value {
+            min-height: 44px;
+            padding-inline: 14px;
+            justify-content: space-between;
+        }
         .badge.live { background: var(--success-soft); color: var(--success); border-color: rgba(16, 185, 129, 0.18); }
+        .badge.dead { background: var(--danger-soft); color: var(--danger); border-color: rgba(216, 62, 93, 0.18); }
         .badge.sql { background: var(--accent-soft); color: var(--accent); border-color: rgba(29, 114, 217, 0.18); }
         .status-pill {
             display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; background: var(--surface-soft);
@@ -371,7 +391,7 @@
         .message-cell { max-width: 760px; }
         .message-cell span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; line-height: 1.5; }
         .topbar-chip { display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 16px; background: var(--surface-soft); border: 1px solid var(--border); color: var(--text-soft); }
-        .theme-toggle, .timezone-toggle { padding-inline: 12px; gap: 10px; }
+        .theme-toggle, .timezone-toggle, .topbar-icon { padding-inline: 12px; gap: 10px; }
         .theme-toggle span:last-child, .timezone-toggle span:last-child, .topbar-icon span:last-child, .brand-toggle span:last-child { font-size: 12px; font-weight: 700; }
         @media (max-width: 1280px) {
             .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -460,10 +480,10 @@
                         </div>
                     </div>
                     <div class="topbar-actions">
-                        <span class="badge sql">{{ t['shell.live'] }}</span>
-                        <button class="timezone-toggle" id="timezoneToggle" type="button" aria-label="Set time zone"><span class="btn-label">TZ</span><span id="timezoneToggleLabel">Local</span></button>
-                        <button class="topbar-icon" id="languageToggle" type="button" aria-label="Toggle language"><span class="btn-label">{{ t['shell.language'] }}</span><span id="languageToggleLabel">{{ ui_lang|upper }}</span></button>
-                        <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme"><span class="btn-label" id="themeToggleIcon">{{ t['shell.theme.icon.dark'] }}</span><span id="themeToggleLabel">{{ t['shell.theme.dark'] }}</span></button>
+                        <span class="badge sql with-value" id="platformStatusBadge"><span class="btn-label" id="platformStatusLabel">{{ t['shell.live'] }}</span><span class="control-value" id="platformStatusValue">{{ t['shell.live.ok'] }}</span></span>
+                        <button class="timezone-toggle topbar-control" id="timezoneToggle" type="button" aria-label="Set time zone"><span class="btn-label">TZ</span><span class="control-value" id="timezoneToggleLabel">Local</span></button>
+                        <button class="topbar-icon topbar-control" id="languageToggle" type="button" aria-label="Toggle language"><span class="btn-label">{{ t['shell.language'] }}</span><span class="control-value" id="languageToggleLabel">{{ ui_lang|upper }}</span></button>
+                        <button class="theme-toggle topbar-control" id="themeToggle" type="button" aria-label="Toggle theme"><span class="btn-label" id="themeToggleIcon">{{ t['shell.theme.icon.dark'] }}</span><span class="control-value" id="themeToggleLabel">{{ t['shell.theme.dark'] }}</span></button>
                         <span class="status-pill">{{ user.username if user is defined else 'guest' }} / {{ user.role if user is defined else 'guest' }}</span>
                         <a class="btn ghost" href="/auth/logout">{{ t['shell.sign_out'] }}</a>
                     </div>
@@ -566,6 +586,8 @@
             const timezoneToggleLabel = document.getElementById('timezoneToggleLabel');
             const languageToggle = document.getElementById('languageToggle');
             const languageToggleLabel = document.getElementById('languageToggleLabel');
+            const platformStatusBadge = document.getElementById('platformStatusBadge');
+            const platformStatusValue = document.getElementById('platformStatusValue');
             const sidebarToggle = document.getElementById('sidebarToggle');
             const sidebarToggleLabel = document.getElementById('sidebarToggleLabel');
             const sidebarMobileToggle = document.getElementById('sidebarMobileToggle');
@@ -573,6 +595,7 @@
             const desktopMq = window.matchMedia('(min-width: 961px)');
             const storedTheme = localStorage.getItem('rdegon_theme') || 'light';
             const storedSidebar = localStorage.getItem('rdegon_sidebar') || 'expanded';
+            let platformStatusTimer = null;
             body.dataset.theme = storedTheme;
             body.dataset.sidebar = storedSidebar;
             function syncThemeLabel() {
@@ -593,6 +616,30 @@
                 const current = document.documentElement.lang || '{{ ui_lang or "en" }}';
                 languageToggleLabel.textContent = current.toUpperCase();
                 languageToggle.title = `${UI_I18N['shell.language']}: ${current.toUpperCase()}`;
+            }
+            async function refreshPlatformStatus() {
+                if (!platformStatusBadge || !platformStatusValue) return;
+                try {
+                    const response = await fetch('/api/platform/status', { headers: { 'Accept': 'application/json' } });
+                    const payload = await response.json();
+                    if (!response.ok) throw new Error(payload.error || 'status failed');
+                    const clickhouseOk = !!payload.clickhouse_ok;
+                    platformStatusBadge.classList.toggle('live', clickhouseOk);
+                    platformStatusBadge.classList.toggle('dead', !clickhouseOk);
+                    platformStatusBadge.classList.toggle('sql', clickhouseOk);
+                    platformStatusValue.textContent = clickhouseOk ? UI_I18N['shell.live.ok'] : UI_I18N['shell.live.down'];
+                    if (payload.last_event_ts) {
+                        platformStatusBadge.title = `${UI_I18N['shell.live']}: ${platformStatusValue.textContent}. Last event ${formatDisplayTimestamp(payload.last_event_ts)}`;
+                    } else {
+                        platformStatusBadge.title = `${UI_I18N['shell.live']}: ${platformStatusValue.textContent}`;
+                    }
+                    window.dispatchEvent(new CustomEvent('rdegon:platform-status', { detail: payload }));
+                } catch (error) {
+                    platformStatusBadge.classList.remove('live', 'sql');
+                    platformStatusBadge.classList.add('dead');
+                    platformStatusValue.textContent = UI_I18N['shell.live.down'];
+                    platformStatusBadge.title = `${UI_I18N['shell.live']}: ${UI_I18N['shell.live.down']}`;
+                }
             }
             function closeMobileSidebar() { body.dataset.sidebarMobile = 'closed'; }
             function openMobileSidebar() { body.dataset.sidebarMobile = 'open'; }
@@ -648,6 +695,11 @@
             syncTimeZoneLabel();
             syncLanguageLabel();
             applyTimestampFormatting(document);
+            refreshPlatformStatus();
+            platformStatusTimer = window.setInterval(refreshPlatformStatus, 15000);
+            document.addEventListener('visibilitychange', function() {
+                if (!document.hidden) refreshPlatformStatus();
+            });
         })();
     </script>
     {% block extra_scripts %}{% endblock %}

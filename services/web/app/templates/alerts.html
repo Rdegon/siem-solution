@@ -19,7 +19,7 @@
         top: 0;
         right: 0;
         height: 100vh;
-        width: min(560px, 100vw);
+        width: min(620px, 100vw);
         background: var(--surface-solid);
         border-left: 1px solid var(--border);
         box-shadow: -22px 0 48px rgba(15, 23, 42, 0.20);
@@ -38,6 +38,30 @@
         padding: 20px 22px 0;
     }
     .alert-drawer-body { padding: 18px 22px 22px; overflow: auto; }
+    .drawer-section {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+    }
+    .drawer-summary-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .drawer-summary-card {
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        background: var(--surface-alt);
+    }
+    .drawer-summary-card .hint {
+        margin-bottom: 8px;
+    }
+    @media (max-width: 960px) {
+        .drawer-summary-grid {
+            grid-template-columns: 1fr;
+        }
+    }
 </style>
 {% endblock %}
 {% block content %}
@@ -50,7 +74,7 @@
 </div>
 <section class="panel"><div class="panel-body" style="display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:center;"><div class="chip-row"><a class="chip {% if view == 'agg' %}active{% endif %}" href="/alerts?view=agg">Aggregated incidents</a><a class="chip {% if view == 'raw' %}active{% endif %}" href="/alerts?view=raw">Raw alert queue</a><a class="chip" href="/events?q=message%20ILIKE%20'%25auditd:%25'">Open auditd events</a></div><div class="page-note">Current view: <strong>{{ 'raw alerts' if view == 'raw' else 'aggregated incidents' }}</strong></div></div></section>
 <section class="panel">
-    <div class="panel-header"><div><h3 class="panel-title">Queue</h3><p class="panel-subtitle">Click any row to open a side drawer, update lifecycle state, review history, and pivot into Event Console.</p></div></div>
+    <div class="panel-header"><div><h3 class="panel-title">Queue</h3><p class="panel-subtitle">Click any row to open the side drawer, update workflow state, review origin details, and pivot into the Event Console.</p></div></div>
     <div class="panel-body table-wrap">
         <table id="alertsTable">
             <thead id="alertsHead"></thead>
@@ -65,7 +89,7 @@
     <div class="alert-drawer-header">
         <div>
             <h3 class="panel-title">Incident details</h3>
-            <p class="panel-subtitle">Lifecycle, context, and investigation pivots for the selected row.</p>
+            <p class="panel-subtitle">Lifecycle, scope, origin systems, actors, affected assets and related events.</p>
         </div>
         <button class="btn ghost" id="closeAlertDrawerBtn" type="button">Close</button>
     </div>
@@ -79,6 +103,7 @@ const alertsAgg = {{ alerts_agg | tojson }};
 const alertsRaw = {{ alerts_raw | tojson }};
 const canEditWorkflow = {{ ('incidents:update' in user.permissions) | tojson }};
 const statusTransitions = {{ status_transitions | tojson }};
+const initialFocus = {{ focus | tojson }};
 const rows = mode === 'raw' ? alertsRaw : alertsAgg;
 const alertsHead = document.getElementById('alertsHead');
 const alertsBody = document.getElementById('alertsBody');
@@ -88,6 +113,7 @@ const alertDrawerPanel = document.getElementById('alertDrawerPanel');
 const alertDrawerOverlay = document.getElementById('alertDrawerOverlay');
 const closeAlertDrawerBtn = document.getElementById('closeAlertDrawerBtn');
 let selectedIndex = null;
+
 function parseJsonBlob(value) {
     if (!value) return null;
     if (typeof value === 'object') return value;
@@ -97,74 +123,83 @@ function parseJsonBlob(value) {
         return null;
     }
 }
-function renderKvSection(title, payload) {
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Object.keys(payload).length) return '';
-    return `<div style="margin-top:14px;"><div class="hint">${escapeHtml(title)}</div><div class="kv-list">${Object.entries(payload).map(([key, value]) => `
+
+function renderKvRows(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Object.keys(payload).length) return '<div class="page-note">No structured data.</div>';
+    return `<div class="kv-list">${Object.entries(payload).map(([key, value]) => `
         <div class="kv"><div class="kv-key">${escapeHtml(key)}</div><div class="kv-value">${escapeHtml(typeof value === 'object' ? JSON.stringify(value) : value)}</div></div>
-    `).join('')}</div></div>`;
+    `).join('')}</div>`;
 }
+
 function rowKey(row) {
     return mode === 'raw' ? String(row.alert_id) : String(row.agg_id);
 }
+
 function eventLinkForRow(row) {
-    if (mode === 'raw' && row.source) return `/events?q=${encodeURIComponent(`log_source = '${row.source}'`)}`;
+    if (mode === 'raw' && row.source) return `/events?q=${encodeURIComponent(`log_source = '${String(row.source).replace(/'/g, "''")}'`)}`;
     if (mode === 'agg' && Array.isArray(row.sources) && row.sources.length === 1) {
-        return `/events?q=${encodeURIComponent(`log_source = '${row.sources[0]}'`)}`;
+        return `/events?q=${encodeURIComponent(`log_source = '${String(row.sources[0]).replace(/'/g, "''")}'`)}`;
     }
     if (mode === 'agg' && Array.isArray(row.sources) && row.sources.length > 1) {
-        const expr = row.sources.slice(0, 4).map((source) => `log_source = '${String(source).replace(/'/g, "''")}'`).join(' OR ');
+        const expr = row.sources.slice(0, 6).map((source) => `log_source = '${String(source).replace(/'/g, "''")}'`).join(' OR ');
         return `/events?q=${encodeURIComponent(expr)}`;
     }
-    if (row.entity_key) return `/events?q=${encodeURIComponent(`log_source = '${row.entity_key}'`)}`;
-    return `/events?q=${encodeURIComponent(`message ILIKE '%${row.rule_name}%'`)}`;
+    if (row.entity_key) return `/events?q=${encodeURIComponent(`log_source = '${String(row.entity_key).replace(/'/g, "''")}'`)}`;
+    return `/events?q=${encodeURIComponent(`message ILIKE '%${String(row.rule_name || '').replace(/'/g, "''")}%'`)}`;
 }
+
 function openDrawer() {
     alertDrawerPanel.classList.add('open');
     alertDrawerOverlay.classList.add('open');
     alertDrawerPanel.setAttribute('aria-hidden', 'false');
 }
+
 function closeDrawer() {
     alertDrawerPanel.classList.remove('open');
     alertDrawerOverlay.classList.remove('open');
     alertDrawerPanel.setAttribute('aria-hidden', 'true');
 }
+
 function renderTable() {
     if (mode === 'agg') {
         alertsHead.innerHTML = '<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Alerts</th><th>Entities</th><th>Status</th><th>Assignee</th></tr>';
         alertsBody.innerHTML = rows.map((row, index) => `
-            <tr data-index="${index}" class="${selectedIndex === index ? 'active' : ''}">
-                <td class="ts-cell">${escapeHtml(formatDisplayTimestamp(row.ts_last))}</td>
-                <td>${escapeHtml(row.rule_name)}</td>
-                <td><span class="severity ${severityClass(row.severity_agg)}">${escapeHtml(row.severity_agg)}</span></td>
+            <tr data-index="${index}" data-record-id="${escapeHtml(rowKey(row))}" class="${selectedIndex === index ? 'active' : ''}">
+                <td class="ts-cell" data-ts="${escapeHtml(row.ts_last || '')}">${escapeHtml(row.ts_last || '')}</td>
+                <td>${escapeHtml(row.rule_name || '')}</td>
+                <td><span class="severity ${severityClass(row.severity_agg)}">${escapeHtml(row.severity_agg || 'info')}</span></td>
                 <td>${Number(row.count_alerts || 0)}</td>
                 <td>${Number(row.unique_entities || 0)}</td>
-                <td><span class="status-pill">${escapeHtml(row.status)}</span></td>
+                <td><span class="status-pill">${escapeHtml(row.status || 'new')}</span></td>
                 <td>${escapeHtml(row.assignee || 'unassigned')}</td>
             </tr>
         `).join('');
     } else {
         alertsHead.innerHTML = '<tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Source</th><th>Status</th><th>Assignee</th></tr>';
         alertsBody.innerHTML = rows.map((row, index) => `
-            <tr data-index="${index}" class="${selectedIndex === index ? 'active' : ''}">
-                <td class="ts-cell">${escapeHtml(formatDisplayTimestamp(row.ts_last))}</td>
-                <td>${escapeHtml(row.rule_name)}</td>
-                <td><span class="severity ${severityClass(row.severity)}">${escapeHtml(row.severity)}</span></td>
+            <tr data-index="${index}" data-record-id="${escapeHtml(rowKey(row))}" class="${selectedIndex === index ? 'active' : ''}">
+                <td class="ts-cell" data-ts="${escapeHtml(row.ts_last || '')}">${escapeHtml(row.ts_last || '')}</td>
+                <td>${escapeHtml(row.rule_name || '')}</td>
+                <td><span class="severity ${severityClass(row.severity)}">${escapeHtml(row.severity || 'info')}</span></td>
                 <td>${Number(row.hits || 0)}</td>
                 <td class="table-code">${escapeHtml(row.source || row.entity_key || '')}</td>
-                <td><span class="status-pill">${escapeHtml(row.status)}</span></td>
+                <td><span class="status-pill">${escapeHtml(row.status || 'new')}</span></td>
                 <td>${escapeHtml(row.assignee || 'unassigned')}</td>
             </tr>
         `).join('');
     }
     alertsEmpty.style.display = rows.length ? 'none' : 'block';
+    applyTimestampFormatting(alertsBody);
     alertsBody.querySelectorAll('tr').forEach((node) => {
         node.addEventListener('click', () => {
             selectedIndex = Number(node.dataset.index);
             renderTable();
             renderDrawer(rows[selectedIndex]);
+            node.scrollIntoView({ block: 'nearest' });
         });
     });
 }
+
 async function saveAssignment(row, statusValue, assigneeValue, noteValue) {
     const recordId = mode === 'raw' ? row.alert_id : row.agg_id;
     const response = await fetch(`/api/alerts/${mode}/${recordId}`, {
@@ -180,6 +215,7 @@ async function saveAssignment(row, statusValue, assigneeValue, noteValue) {
     renderTable();
     renderDrawer(row);
 }
+
 async function loadHistory(row) {
     const recordId = mode === 'raw' ? row.alert_id : row.agg_id;
     const container = document.getElementById('alertHistoryBlock');
@@ -203,59 +239,120 @@ async function loadHistory(row) {
         container.innerHTML = `<div class="hint">History</div><div class="page-note">${escapeHtml(error.message || String(error))}</div>`;
     }
 }
+
+function drawerSummaryCards(row, cluster, context, sourceList) {
+    const assets = (cluster.assets || []).filter(Boolean);
+    const actors = (cluster.actors || []).filter(Boolean);
+    const iocs = (cluster.iocs || []).filter(Boolean);
+    const targetUsers = [
+        row.target_user,
+        row.user_name,
+        context.user_name,
+        context.target_user,
+        context['user.target.name'],
+        context['user.name'],
+    ].filter(Boolean);
+    return `
+        <div class="drawer-summary-grid">
+            <div class="drawer-summary-card">
+                <div class="hint">Primary system</div>
+                <div style="font-weight:700;">${escapeHtml(assets[0] || sourceList[0] || row.source || row.entity_key || 'n/a')}</div>
+                <div class="page-note">${escapeHtml(sourceList.join(', ') || 'No explicit source list')}</div>
+            </div>
+            <div class="drawer-summary-card">
+                <div class="hint">Attacking IPs / actors</div>
+                <div style="font-weight:700;">${escapeHtml(actors[0] || context['source.ip'] || context.source_ip || 'n/a')}</div>
+                <div class="page-note">${escapeHtml(actors.slice(0, 6).join(', ') || 'No actor IPs in incident cluster')}</div>
+            </div>
+            <div class="drawer-summary-card">
+                <div class="hint">Affected assets</div>
+                <div style="font-weight:700;">${Number(assets.length || 0)}</div>
+                <div class="page-note">${escapeHtml(assets.slice(0, 6).join(', ') || 'No CMDB assets linked')}</div>
+            </div>
+            <div class="drawer-summary-card">
+                <div class="hint">Users / identities</div>
+                <div style="font-weight:700;">${escapeHtml(targetUsers[0] || 'n/a')}</div>
+                <div class="page-note">${escapeHtml(Array.from(new Set(targetUsers)).slice(0, 6).join(', ') || 'No explicit identities')}</div>
+            </div>
+            <div class="drawer-summary-card">
+                <div class="hint">Threat intel</div>
+                <div style="font-weight:700;">${Number(iocs.length || 0)}</div>
+                <div class="page-note">${escapeHtml(iocs.slice(0, 6).join(', ') || 'No IOC enrichment in cluster')}</div>
+            </div>
+            <div class="drawer-summary-card">
+                <div class="hint">Rule and severity</div>
+                <div style="font-weight:700;">${escapeHtml(row.rule_name || '')}</div>
+                <div class="page-note">${escapeHtml((row.severity_agg || row.severity || 'info').toUpperCase())} / ${escapeHtml(row.status || 'new')} / ${escapeHtml(row.assignee || 'unassigned')}</div>
+            </div>
+        </div>
+    `;
+}
+
 function renderDrawer(row) {
     if (!row) {
         alertDrawer.innerHTML = '<div class="drawer-empty">Click a row in the queue to inspect the incident or alert.</div>';
         return;
     }
-    const context = mode === 'raw' ? (row.context || parseJsonBlob(row.context_json)) : (row.group_key || parseJsonBlob(row.group_key_json));
-    const samples = mode === 'agg' ? (row.samples || parseJsonBlob(row.samples_json)) : null;
+    const context = mode === 'raw' ? (row.context || parseJsonBlob(row.context_json) || {}) : (row.group_key || parseJsonBlob(row.group_key_json) || {});
+    const samples = mode === 'agg' ? (row.samples || parseJsonBlob(row.samples_json) || []) : [];
     const cluster = row.cluster || {};
-    const sourceChips = mode === 'raw'
+    const sourceList = mode === 'raw'
         ? [row.source || row.entity_key].filter(Boolean)
         : (row.sources || []);
-    const chips = `<div class="chip-row" style="margin-bottom:14px;"><a class="chip active" href="${eventLinkForRow(row)}">Open related events</a><span class="chip">rule_id: ${escapeHtml(row.rule_id)}</span><span class="chip">status: ${escapeHtml(row.status)}</span>${row.assignee ? `<span class="chip">assignee: ${escapeHtml(row.assignee)}</span>` : ''}</div>`;
+    const chips = `<div class="chip-row" style="margin-bottom:14px;"><a class="chip active" href="${eventLinkForRow(row)}">Open related events</a><span class="chip">rule_id: ${escapeHtml(row.rule_id)}</span><span class="chip">status: ${escapeHtml(row.status || 'new')}</span>${row.assignee ? `<span class="chip">assignee: ${escapeHtml(row.assignee)}</span>` : ''}${sourceList[0] ? `<a class="chip" href="/assets/devices/${encodeURIComponent(sourceList[0])}">Open source asset</a>` : ''}</div>`;
     const allowedStatuses = Array.from(new Set([row.status, ...(statusTransitions[row.status] || [])]));
     const lifecycle = canEditWorkflow ? `
-        <div class="grid-2" style="margin-bottom:14px;">
-            <div>
-                <label class="hint" for="statusSelect">Status</label>
-                <select id="statusSelect" class="select">
-                    ${allowedStatuses.map((value) => `<option value="${value}" ${row.status === value ? 'selected' : ''}>${value}</option>`).join('')}
-                </select>
+        <div class="drawer-section">
+            <div class="hint">Workflow</div>
+            <div class="grid-2" style="margin-bottom:14px;">
+                <div>
+                    <label class="hint" for="statusSelect">Status</label>
+                    <select id="statusSelect" class="select">
+                        ${allowedStatuses.map((value) => `<option value="${value}" ${row.status === value ? 'selected' : ''}>${value}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label class="hint" for="assigneeInput">Assignee</label>
+                    <input id="assigneeInput" class="field" value="${escapeHtml(row.assignee || '')}" placeholder="tier1-analyst">
+                </div>
             </div>
-            <div>
-                <label class="hint" for="assigneeInput">Assignee</label>
-                <input id="assigneeInput" class="field" value="${escapeHtml(row.assignee || '')}" placeholder="tier1-analyst">
+            <div style="margin-bottom:14px;">
+                <label class="hint" for="workflowNoteInput">Workflow note</label>
+                <textarea id="workflowNoteInput" class="textarea" style="min-height:96px;" placeholder="What changed and why?"></textarea>
             </div>
+            <div class="chip-row"><button type="button" class="btn primary" id="saveAlertStateBtn">Save workflow state</button></div>
         </div>
-        <div style="margin-bottom:14px;">
-            <label class="hint" for="workflowNoteInput">Workflow note</label>
-            <textarea id="workflowNoteInput" class="textarea" style="min-height:96px;" placeholder="What changed and why?"></textarea>
-        </div>
-        <div class="chip-row" style="margin-bottom:14px;">
-            <button type="button" class="btn primary" id="saveAlertStateBtn">Save workflow state</button>
-        </div>
-    ` : `<div class="page-note" style="margin-bottom:14px;">Current role is read-only for incident workflow updates.</div>`;
-    const details = Object.entries(row).map(([key, value]) => {
-        if (['context', 'cluster', 'samples', 'group_key', 'sources'].includes(key)) return '';
-        const formatted = key.includes('ts') ? formatDisplayTimestamp(value) : escapeHtml(value);
-        return `<div class="kv"><div class="kv-key">${escapeHtml(key)}</div><div class="kv-value">${formatted}</div></div>`;
-    }).join('');
-    const originSection = `
-        <div style="margin-bottom:14px;">
-            <div class="hint">Origin and scope</div>
-            <div class="chip-row">
-                ${sourceChips.map((item) => `<span class="chip">${escapeHtml(item)}</span>`).join('') || '<span class="page-note">Source is not available.</span>'}
-                ${row.entity_key ? `<span class="chip">entity: ${escapeHtml(row.entity_key)}</span>` : ''}
-                ${mode === 'agg' && row.raw_hits_total ? `<span class="chip">raw hits: ${Number(row.raw_hits_total)}</span>` : ''}
-                ${mode === 'agg' && row.raw_alerts_total ? `<span class="chip">raw alerts: ${Number(row.raw_alerts_total)}</span>` : ''}
-            </div>
-        </div>
-    `;
+    ` : `<div class="drawer-section"><div class="page-note">Current role is read-only for incident workflow updates.</div></div>`;
+    const priorityDetails = {
+        "first_seen": row.ts_first || '',
+        "last_seen": row.ts_last || '',
+        "alerts": mode === 'agg' ? Number(row.count_alerts || 0) : Number(row.hits || 0),
+        "entities": mode === 'agg' ? Number(row.unique_entities || 0) : escapeHtml(row.entity_key || 'n/a'),
+        "window_seconds": Number(row.window_s || 0),
+        "entity_key": row.entity_key || '',
+    };
+    const detailRows = Object.entries(row).filter(([key]) => ![
+        'context',
+        'context_json',
+        'cluster',
+        'samples',
+        'samples_json',
+        'group_key',
+        'group_key_json',
+        'sources',
+        'source_summary',
+        'raw_alerts_total',
+        'raw_hits_total',
+    ].includes(key));
+    const compactDetails = `<div class="kv-list">${Object.entries(priorityDetails).map(([key, value]) => `
+        <div class="kv"><div class="kv-key">${escapeHtml(key)}</div><div class="kv-value">${escapeHtml(String(key.includes('seen') ? formatDisplayTimestamp(value) : value || 'n/a'))}</div></div>
+    `).join('')}</div>`;
+    const longDetails = `<div class="kv-list">${detailRows.map(([key, value]) => `
+        <div class="kv"><div class="kv-key">${escapeHtml(key)}</div><div class="kv-value">${escapeHtml(String(key.includes('ts') ? formatDisplayTimestamp(value) : value ?? ''))}</div></div>
+    `).join('')}</div>`;
     const clusterSection = cluster && Object.keys(cluster).length ? `
-        <div style="margin-top:14px;">
-            <div class="hint">Incident cluster</div>
+        <div class="drawer-section">
+            <div class="hint">Cluster context</div>
             <div class="kv-list">
                 <div class="kv"><div class="kv-key">Sources</div><div class="kv-value">${escapeHtml((cluster.sources || []).join(', ') || 'n/a')}</div></div>
                 <div class="kv"><div class="kv-key">Assets</div><div class="kv-value">${escapeHtml((cluster.assets || []).join(', ') || 'n/a')}</div></div>
@@ -263,33 +360,44 @@ function renderDrawer(row) {
                 <div class="kv"><div class="kv-key">IOCs</div><div class="kv-value">${escapeHtml((cluster.iocs || []).join(', ') || 'n/a')}</div></div>
                 <div class="kv"><div class="kv-key">Campaigns</div><div class="kv-value">${escapeHtml((cluster.campaigns || []).join(', ') || 'n/a')}</div></div>
                 <div class="kv"><div class="kv-key">Rules</div><div class="kv-value">${escapeHtml((cluster.rule_names || []).join(', ') || 'n/a')}</div></div>
-                <div class="kv"><div class="kv-key">Raw alerts</div><div class="kv-value">${Number(cluster.raw_alerts || 0)}</div></div>
-                <div class="kv"><div class="kv-key">Total hits</div><div class="kv-value">${Number(cluster.total_hits || 0)}</div></div>
-                <div class="kv"><div class="kv-key">First seen</div><div class="kv-value">${escapeHtml(formatDisplayTimestamp(cluster.cluster_first || ''))}</div></div>
-                <div class="kv"><div class="kv-key">Last seen</div><div class="kv-value">${escapeHtml(formatDisplayTimestamp(cluster.cluster_last || ''))}</div></div>
             </div>
         </div>
     ` : '';
-    const contextSection = renderKvSection(mode === 'raw' ? 'Alert context' : 'Group key', context);
-    const samplesSection = Array.isArray(samples) && samples.length ? `
-        <div style="margin-top:14px;">
-            <div class="hint">Representative events</div>
-            <div class="kv-list">
-                ${samples.map((sample, index) => {
-                    const payload = parseJsonBlob(sample) || sample;
-                    return `
-                        <div class="panel" style="background:var(--surface-alt); border-radius:18px;">
-                            <div class="panel-body" style="padding:14px 16px;">
-                                <div class="hint">Sample ${index + 1}</div>
-                                ${renderKvSection('Fields', payload)}
-                            </div>
-                        </div>
-                    `;
-                }).join('')}
-            </div>
+    const rawPayloads = `
+        <div class="drawer-section">
+            <details>
+                <summary class="hint" style="cursor:pointer;">Structured context</summary>
+                ${renderKvRows(context)}
+            </details>
         </div>
-    ` : '';
-    alertDrawer.innerHTML = `${chips}${lifecycle}${originSection}<div class="kv-list">${details}</div>${clusterSection}${contextSection}<div id="alertHistoryBlock" style="margin-top:14px;"><div class="hint">History</div><div class="page-note">Loading history...</div></div>${samplesSection}`;
+        <div class="drawer-section">
+            <details>
+                <summary class="hint" style="cursor:pointer;">Raw fields</summary>
+                ${longDetails}
+            </details>
+        </div>
+        ${Array.isArray(samples) && samples.length ? `
+        <div class="drawer-section">
+            <details>
+                <summary class="hint" style="cursor:pointer;">Representative samples (${samples.length})</summary>
+                <div class="view-stack" style="margin-top:12px;">
+                    ${samples.map((sample, index) => `<div class="drawer-summary-card"><div class="hint">Sample ${index + 1}</div>${renderKvRows(parseJsonBlob(sample) || sample || {})}</div>`).join('')}
+                </div>
+            </details>
+        </div>` : ''}
+    `;
+    alertDrawer.innerHTML = `
+        ${chips}
+        ${drawerSummaryCards(row, cluster, context, sourceList)}
+        <div class="drawer-section">
+            <div class="hint">Investigation priority</div>
+            ${compactDetails}
+        </div>
+        ${lifecycle}
+        ${clusterSection}
+        <div id="alertHistoryBlock" class="drawer-section"><div class="hint">History</div><div class="page-note">Loading history...</div></div>
+        ${rawPayloads}
+    `;
     loadHistory(row);
     if (canEditWorkflow) {
         const saveBtn = document.getElementById('saveAlertStateBtn');
@@ -309,8 +417,21 @@ function renderDrawer(row) {
     }
     openDrawer();
 }
+
+function focusInitialRow() {
+    if (!initialFocus) return;
+    const index = rows.findIndex((row) => rowKey(row) === String(initialFocus));
+    if (index < 0) return;
+    selectedIndex = index;
+    renderTable();
+    renderDrawer(rows[index]);
+    const rowNode = alertsBody.querySelector(`[data-record-id="${CSS.escape(String(initialFocus))}"]`);
+    if (rowNode) rowNode.scrollIntoView({ block: 'center' });
+}
+
 closeAlertDrawerBtn.addEventListener('click', closeDrawer);
 alertDrawerOverlay.addEventListener('click', closeDrawer);
 renderTable();
+focusInitialRow();
 </script>
 {% endblock %}

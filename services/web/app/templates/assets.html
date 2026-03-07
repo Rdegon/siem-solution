@@ -4,772 +4,84 @@
 {% block page_subtitle %}{{ t['page.assets.subtitle'] }}{% endblock %}
 {% block extra_head %}
 <style>
-    .asset-layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1.4fr) minmax(320px, .9fr);
-        gap: 18px;
-        align-items: start;
-    }
-    .asset-layout .panel {
-        min-width: 0;
-    }
-    .asset-row { cursor: pointer; }
-    .asset-row.active td { background: var(--surface-alt); }
-    .asset-detail-empty { padding: 28px; text-align: center; color: var(--text-soft); }
-    .normalizer-list {
-        display: grid;
-        gap: 12px;
-    }
-    .normalizer-card {
-        padding: 16px 18px;
-        border-radius: 18px;
-        border: 1px solid var(--border);
-        background: linear-gradient(180deg, var(--surface-solid), var(--surface-alt));
-    }
-    .rule-catalog {
-        display: grid;
-        gap: 16px;
-    }
-    .rule-card {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: flex-start;
-        gap: 18px;
-        padding: 20px;
-        border-radius: 22px;
-        background: linear-gradient(180deg, var(--surface-solid), var(--surface-alt));
-        border: 1px solid var(--border);
-    }
-    .rule-main {
-        display: grid;
-        gap: 10px;
-        min-width: 0;
-        flex: 1 1 420px;
-    }
-    .rule-title-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        align-items: center;
-    }
-    .rule-id {
-        min-width: 60px;
-        color: var(--text-mute);
-        font: 600 12px var(--font-mono);
-        letter-spacing: .12em;
-        text-transform: uppercase;
-    }
-    .rule-meta-stack {
-        display: grid;
-        gap: 10px;
-        min-width: 0;
-        flex: 1 1 320px;
-    }
-    .rule-meta-grid {
-        display: grid;
-        gap: 12px;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .rule-meta-card {
-        padding: 14px 16px;
-        border-radius: 18px;
-        border: 1px solid var(--border);
-        background: var(--surface-soft);
-        min-width: 0;
-    }
-    .rule-meta-card .hint {
-        margin-bottom: 10px;
-    }
-    .rule-meta-card .page-note {
-        overflow-wrap: anywhere;
-    }
-    .rule-actions {
-        display: grid;
-        align-content: start;
-        gap: 10px;
-        flex: 0 0 132px;
-        min-width: 132px;
-    }
-    .rule-actions .btn {
-        width: 100%;
-    }
-    .rule-query {
-        flex-basis: 100%;
-    }
-    .rule-query details {
-        margin-top: 12px;
-    }
-    .rule-query summary {
-        cursor: pointer;
-        color: var(--text-soft);
-        font: 500 11px var(--font-mono);
-        letter-spacing: .12em;
-        text-transform: uppercase;
-    }
-    .rule-query .sql-box {
-        margin-top: 10px;
-        max-height: 220px;
-    }
-    @media (max-width: 1280px) {
-        .asset-layout {
-            grid-template-columns: 1fr;
-        }
-        .rule-card {
-            flex-direction: column;
-        }
-        .rule-meta-grid {
-            grid-template-columns: 1fr;
-        }
-        .rule-actions {
-            width: 100%;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            flex: 1 1 100%;
-        }
-    }
+.asset-tabs,.rule-actions{display:flex;flex-wrap:wrap;gap:10px}.asset-section{display:none}.asset-section.active{display:block}
+.inventory-layout{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(360px,.95fr);gap:18px;align-items:start}.inventory-row.active td{background:var(--surface-alt)}
+.asset-detail-empty{padding:28px;text-align:center;color:var(--text-soft)}.rule-catalog,.normalizer-list,.collector-grid{display:grid;gap:16px}
+.rule-card,.normalizer-card,.collector-card,.focus-card{padding:20px;border-radius:22px;border:1px solid var(--border);background:linear-gradient(180deg,var(--surface-solid),var(--surface-alt));box-shadow:var(--shadow-soft)}
+.focus-card{border-color:rgba(75,147,255,.34);box-shadow:0 0 0 3px rgba(75,147,255,.12),var(--shadow-soft)}.rule-grid,.collector-meta{grid-template-columns:repeat(2,minmax(0,1fr));display:grid;gap:12px}.rule-meta-card{padding:14px 16px;border-radius:18px;border:1px solid var(--border);background:var(--surface-soft)}
+@media (max-width:1280px){.inventory-layout,.rule-grid,.collector-meta{grid-template-columns:1fr}}
 </style>
 {% endblock %}
 {% block content %}
 <div class="view-stack">
-    {% if status %}
-    <section class="panel"><div class="panel-body"><div class="badge live">{{ status }}</div></div></section>
-    {% endif %}
-    {% if error %}
-    <section class="panel"><div class="panel-body"><div class="error-box">{{ error }}</div></div></section>
-    {% endif %}
+{% if status %}<section class="panel"><div class="panel-body"><div class="badge live">{{ status }}</div></div></section>{% endif %}
+{% if error %}<section class="panel"><div class="panel-body"><div class="error-box">{{ error }}</div></div></section>{% endif %}
+<div class="grid-4">{% for item in asset_categories %}<section class="kpi"><p class="kpi-label">{{ item.name }}</p><div class="kpi-value">{{ item.count }}</div><div class="kpi-meta">{{ item.description }}</div></section>{% endfor %}</div>
+<section class="panel"><div class="panel-body"><div class="asset-tabs">{% for tab in asset_tabs %}<a class="chip {% if tab.active %}active{% endif %}" href="{{ tab.href }}">{{ tab.label }}</a>{% endfor %}</div></div></section>
 
-    <div class="grid-3">
-        {% for item in asset_categories %}
-        <section class="kpi">
-            <p class="kpi-label">{{ item.name }}</p>
-            <div class="kpi-value">{{ item.count }}</div>
-            <div class="kpi-meta">{{ item.description }}</div>
-        </section>
-        {% endfor %}
-    </div>
+<section class="asset-section" data-asset-section="overview">
+<div class="grid-2">
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Create Sigma rule</h3><p class="panel-subtitle">Publish rule content directly into the detection catalog.</p></div></div><div class="panel-body"><form method="post" action="/assets/rules" class="view-stack"><div><label class="hint" for="sigmaYaml">Sigma YAML</label><textarea id="sigmaYaml" name="sigma_yaml" class="textarea" style="min-height:280px;" {% if 'rules:write' not in user.permissions %}disabled{% endif %}>{{ rule_form.sigma_yaml }}</textarea></div><div class="grid-3"><div><label class="hint" for="threshold">Threshold</label><input id="threshold" name="threshold" type="number" min="1" class="field" value="{{ rule_form.threshold }}" {% if 'rules:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="windowS">Window, sec</label><input id="windowS" name="window_s" type="number" min="60" step="60" class="field" value="{{ rule_form.window_s }}" {% if 'rules:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="entityField">Entity field</label><select id="entityField" name="entity_field" class="select" {% if 'rules:write' not in user.permissions %}disabled{% endif %}>{% for field in entity_fields %}<option value="{{ field }}" {% if rule_form.entity_field == field %}selected{% endif %}>{{ field }}</option>{% endfor %}</select></div></div><div class="chip-row"><button type="submit" class="btn primary" {% if 'rules:write' not in user.permissions %}disabled{% endif %}>Save rule</button><button type="button" class="btn ghost" id="resetSigmaDraft">Reset draft</button><a class="btn ghost" href="/assets?tab=rules">Open rule catalog</a></div></form></div></section>
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Content studio</h3><p class="panel-subtitle">Open dedicated inventories for devices, rules, normalizers, lists, CMDB, TI and collectors.</p></div></div><div class="panel-body"><div class="kv-list"><div class="kv"><div class="kv-key">Devices</div><div class="kv-value">Observed sources with CMDB context and pivots into Event Console.</div></div><div class="kv"><div class="kv-key">Rules</div><div class="kv-value">Sigma-oriented detection catalog with verification and event links.</div></div><div class="kv"><div class="kv-key">Normalizers</div><div class="kv-value">Matcher expressions and UEM mappings for telemetry shaping.</div></div><div class="kv"><div class="kv-key">Active lists / TI</div><div class="kv-value">Enrichment content used during writing and correlation.</div></div></div><div class="asset-tabs" style="margin-top:14px;"><a class="btn ghost" href="/assets?tab=devices">{{ t['assets.tab.devices'] }}</a><a class="btn ghost" href="/assets?tab=rules">{{ t['assets.tab.rules'] }}</a><a class="btn ghost" href="/assets?tab=normalizers">{{ t['assets.tab.normalizers'] }}</a><a class="btn ghost" href="/assets?tab=active-lists">{{ t['assets.tab.active_lists'] }}</a><a class="btn ghost" href="/assets?tab=collectors">{{ t['assets.tab.collectors'] }}</a></div></div></section>
+</div>
+</section>
 
-    <div class="grid-2">
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">Create Sigma rule</h3>
-                    <p class="panel-subtitle">Paste Sigma YAML, choose the threshold/window, and save the converted rule directly into the detection catalog and stream correlation table.</p>
-                </div>
-                <span class="badge sql">Sigma -> stream DSL</span>
-            </div>
-            <div class="panel-body">
-                <form method="post" action="/assets/rules" class="view-stack">
-                    {% if 'rules:write' not in user.permissions %}
-                    <div class="page-note">Current role is read-only for rule authoring. Use an admin account to save Sigma rules.</div>
-                    {% endif %}
-                    <div>
-                        <label class="hint" for="sigmaYaml">Sigma YAML</label>
-                        <textarea id="sigmaYaml" name="sigma_yaml" class="textarea" style="min-height: 360px;" {% if 'rules:write' not in user.permissions %}disabled{% endif %}>{{ rule_form.sigma_yaml }}</textarea>
-                    </div>
-                    <div class="grid-3">
-                        <div>
-                            <label class="hint" for="threshold">Threshold</label>
-                            <input id="threshold" name="threshold" type="number" min="1" class="field" value="{{ rule_form.threshold }}" {% if 'rules:write' not in user.permissions %}disabled{% endif %}>
-                        </div>
-                        <div>
-                            <label class="hint" for="windowS">Window, sec</label>
-                            <input id="windowS" name="window_s" type="number" min="60" step="60" class="field" value="{{ rule_form.window_s }}" {% if 'rules:write' not in user.permissions %}disabled{% endif %}>
-                        </div>
-                        <div>
-                            <label class="hint" for="entityField">Entity field</label>
-                            <select id="entityField" name="entity_field" class="select" {% if 'rules:write' not in user.permissions %}disabled{% endif %}>
-                                {% for field in entity_fields %}
-                                <option value="{{ field }}" {% if rule_form.entity_field == field %}selected{% endif %}>{{ field }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                    </div>
-                    <div class="chip-row">
-                        <button type="submit" class="btn primary" {% if 'rules:write' not in user.permissions %}disabled{% endif %}>Save rule</button>
-                        <button type="button" class="btn ghost" id="resetSigmaDraft">Reset draft</button>
-                    </div>
-                </form>
-            </div>
-        </section>
+<section class="asset-section" data-asset-section="devices">
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Observed device inventory</h3><p class="panel-subtitle">Reporting sources observed during the last 24 hours.</p></div></div><div class="panel-body inventory-layout"><div class="table-wrap"><table id="assetTable"><thead><tr><th>Asset</th><th>Events</th><th>Notable</th><th>auditd</th><th>Last seen</th><th>Categories</th></tr></thead><tbody>{% for asset in assets %}<tr class="inventory-row asset-row {% if loop.first %}active{% endif %}" data-asset-index="{{ loop.index0 }}" data-asset-id="{{ asset.asset }}"><td class="mono">{{ asset.asset }}</td><td>{{ asset.events }}</td><td>{{ asset.notable_events }}</td><td>{{ asset.audit_events }}</td><td data-ts="{{ asset.last_seen }}">{{ asset.last_seen }}</td><td>{{ asset.categories | join(', ') }}</td></tr>{% endfor %}{% if not assets %}<tr><td colspan="6"><div class="empty-box">No active assets were observed during the selected period.</div></td></tr>{% endif %}</tbody></table></div><aside class="panel"><div class="panel-header"><div><h3 class="panel-title">Device details</h3><p class="panel-subtitle">Selected source profile and pivots.</p></div></div><div class="panel-body" id="assetDetailPanel"><div class="asset-detail-empty">Select a device row to inspect categories, products and events.</div></div></aside></div></section>
+</section>
+<section class="asset-section" data-asset-section="collectors">
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Collector inventory</h3><p class="panel-subtitle">Separate collector classes for Linux, Windows, network devices, applications and storage/correlation.</p></div></div><div class="panel-body collector-grid">{% for collector in collectors %}<article class="collector-card" data-collector-id="{{ collector.collector_id }}"><div><div class="hint">{{ collector.collector_id }}</div><h3 class="panel-title" style="margin-top:4px;">{{ collector.name }}</h3><div class="page-note">{{ collector.role }}</div></div><div class="collector-meta"><div class="kv-list"><div class="kv"><div class="kv-key">Node</div><div class="kv-value">{{ collector.node }}</div></div><div class="kv"><div class="kv-key">Source classes</div><div class="kv-value">{{ collector.source_types | join(', ') }}</div></div></div><div class="kv-list"><div class="kv"><div class="kv-key">Sources</div><div class="kv-value">{{ collector.sources_count }}</div></div><div class="kv"><div class="kv-key">Last seen</div><div class="kv-value" {% if collector.last_seen %}data-ts="{{ collector.last_seen }}"{% endif %}>{{ collector.last_seen or 'n/a' }}</div></div></div></div><div class="asset-tabs">{% for item in collector.covered_sources %}<span class="chip">{{ item }}</span>{% endfor %}</div><div class="rule-actions"><a class="btn ghost" href="/assets/collectors/{{ collector.collector_id }}">Open dedicated page</a></div></article>{% endfor %}{% if not collectors %}<div class="empty-box">No collector inventory is available yet.</div>{% endif %}</div></section>
+</section>
 
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">Rule verification</h3>
-                    <p class="panel-subtitle">Use built-in verification conditions to validate whether a rule has matching events during the last 24 hours and whether it already produced alerts.</p>
-                </div>
-            </div>
-            <div class="panel-body">
-                <div class="kv-list">
-                    <div class="kv"><div class="kv-key">Verification source</div><div class="kv-value">Each Sigma rule stores a ClickHouse-safe verification query compiled from the same Sigma selections.</div></div>
-                    <div class="kv"><div class="kv-key">Hit check</div><div class="kv-value">Test buttons run the verification query against the last 24 hours of data and show event hits plus the latest alert timestamp.</div></div>
-                    <div class="kv"><div class="kv-key">Execution path</div><div class="kv-value">Converted rules are saved in <span class="mono">siem.detection_rule_catalog</span> and synchronized into <span class="mono">siem.correlation_rules_stream</span>.</div></div>
-                </div>
-                <div id="ruleTestOutput" class="sql-box mono" style="margin-top: 16px;">Pick a rule in the catalog and click Test to validate that the rule logic sees matching events.</div>
-            </div>
-        </section>
-    </div>
+<section class="asset-section" data-asset-section="rules">
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Detection rule catalog</h3><p class="panel-subtitle">Sigma-oriented content pack with verification and links into Event Console.</p></div></div><div class="panel-body"><div class="rule-catalog">{% for rule in detection_rules %}<article class="rule-card" data-rule-id="{{ rule.id }}"><div class="asset-tabs"><span class="chip">ID {{ rule.id }}</span><span class="severity sev-{{ rule.level }}">{{ rule.level }}</span><span class="chip">{{ rule.sigma_id or 'custom sigma' }}</span><span class="chip">{{ rule.entity_field }}</span></div><div style="font-weight:700; font-size:20px;">{{ rule.title }}</div><div class="page-note">{{ rule.description or 'Sigma-derived detection rule.' }}</div><div class="asset-tabs">{% for tag in rule.tags[:6] %}<span class="chip">{{ tag }}</span>{% endfor %}</div><div class="rule-actions"><button type="button" class="btn ghost" data-test-rule="{{ rule.id }}" {% if 'rules:test' not in user.permissions %}disabled{% endif %}>Test</button><a class="btn ghost" href="/assets/rules/{{ rule.id }}">View</a><a class="btn ghost" href="{{ rule.events_link }}">Events</a></div><div class="rule-grid"><div class="rule-meta-card"><div class="hint">Logsource</div><div class="page-note"><strong>product:</strong> {{ rule.logsource_product or 'n/a' }}</div><div class="page-note"><strong>service:</strong> {{ rule.logsource_service or 'n/a' }}</div></div><div class="rule-meta-card"><div class="hint">Threshold</div><div class="page-note"><strong>count:</strong> {{ rule.threshold }}</div><div class="page-note"><strong>window:</strong> {{ rule.window_s }} sec</div><div class="page-note"><strong>entity:</strong> {{ rule.entity_field }}</div></div><div class="rule-meta-card"><div class="hint">Verification</div><div class="page-note">24h hits: <strong>{{ rule.match_hits_24h }}</strong></div><div class="page-note">Alert rows: <strong>{{ rule.alert_hits_total }}</strong></div><div class="page-note">Last alert: <strong>{{ rule.last_alert_ts or 'n/a' }}</strong></div></div><div class="rule-meta-card"><div class="hint">Verification query</div><div class="sql-box mono" style="margin-top:0;">{{ rule.verification_query }}</div></div></div></article>{% endfor %}{% if not detection_rules %}<div class="empty-box">Detection rule catalog is empty.</div>{% endif %}</div><div id="ruleTestOutput" class="sql-box mono" style="margin-top:16px;">Pick a rule in the catalog and click Test to validate the rule logic.</div></div></section>
+</section>
 
-    <div class="grid-2">
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">CMDB import and observed sync</h3>
-                    <p class="panel-subtitle">Load CSV/JSON assets from external CMDB exports or auto-create provisional records from observed telemetry.</p>
-                </div>
-                <span class="badge live">Import</span>
-            </div>
-            <div class="panel-body view-stack">
-                <form method="post" action="/assets/cmdb/import" class="view-stack">
-                    <div class="page-note">Accepted formats: JSON array of asset objects or CSV with columns like <span class="table-code">asset_id,hostname,ip,owner,criticality,environment,business_service,os_family,expected_ports,tags,notes</span>.</div>
-                    <textarea name="payload" class="textarea" style="min-height:144px;" placeholder='[{"asset_id":"asset-dc-01","hostname":"dc-01","ip":"10.10.10.10","criticality":"critical"}]' {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></textarea>
-                    <div class="chip-row"><button type="submit" class="btn ghost" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}>Import CMDB records</button></div>
-                </form>
-                <form method="post" action="/assets/cmdb/sync-observed" class="view-stack">
-                    <div class="grid-2">
-                        <div><label class="hint" for="syncObservedHours">Lookback hours</label><input id="syncObservedHours" name="hours" class="field" value="72" type="number" min="1" max="720" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div>
-                        <div><label class="hint" for="syncObservedLimit">Max records</label><input id="syncObservedLimit" name="limit" class="field" value="200" type="number" min="1" max="1000" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div>
-                    </div>
-                    <div class="chip-row"><button type="submit" class="btn ghost" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}>Sync observed assets</button></div>
-                </form>
-            </div>
-        </section>
+<section class="asset-section" data-asset-section="normalizers">
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Normalizer catalog</h3><p class="panel-subtitle">Enabled normalizer rules with matcher expressions and UEM mappings.</p></div></div><div class="panel-body"><div class="normalizer-list">{% for rule in normalizer_rules %}<details class="normalizer-card" data-normalizer-id="{{ rule.id }}"><summary style="cursor:pointer; list-style:none;"><div class="rule-actions"><span class="chip">ID {{ rule.id }}</span><span class="chip">priority {{ rule.priority }}</span><span style="font-weight:700;">{{ rule.source_type or 'any source' }}</span><a class="btn ghost" href="/assets/normalizers/{{ rule.id }}">View</a></div></summary><div class="view-stack" style="margin-top:14px;"><div class="rule-meta-card"><div class="hint">Matcher</div><div class="sql-box mono" style="margin-top:0;">{{ rule.event_matcher or 'true' }}</div></div><div class="rule-meta-card"><div class="hint">UEM mapping</div><div class="sql-box mono" style="margin-top:0;">{{ rule.uem_mapping }}</div></div></div></details>{% endfor %}{% if not normalizer_rules %}<div class="empty-box">No enabled normalizer rules found.</div>{% endif %}</div></div></section>
+</section>
+<section class="asset-section" data-asset-section="active-lists">
+<div class="grid-2">
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Active lists</h3><p class="panel-subtitle">Watch, allow and deny inventories used for enrichment and suppression logic.</p></div></div><div class="panel-body"><form method="post" action="/assets/active-lists" class="view-stack"><div class="grid-2"><div><label class="hint" for="listName">List name</label><input id="listName" name="list_name" class="field" placeholder="vip_admins" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="listKind">List role</label><select id="listKind" name="list_kind" class="select" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}><option value="watch">watch</option><option value="allow">allow</option><option value="deny">deny</option></select></div></div><div class="grid-3"><div><label class="hint" for="itemType">Item type</label><select id="itemType" name="item_type" class="select" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}><option value="ip">ip</option><option value="user">user</option><option value="host">host</option><option value="process">process</option><option value="raw">raw</option></select></div><div><label class="hint" for="itemValue">Item value</label><input id="itemValue" name="item_value" class="field" placeholder="192.168.1.39" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="itemLabel">Label</label><input id="itemLabel" name="item_label" class="field" placeholder="Web node" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}></div></div><div><label class="hint" for="itemTags">Tags</label><input id="itemTags" name="tags" class="field" placeholder="vip,critical-asset" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}></div><div class="chip-row"><button type="submit" class="btn primary" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}>Save active list item</button></div></form></div></section>
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Current active-list items</h3><p class="panel-subtitle">Each item can be reopened via a dedicated deep-link page.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>List</th><th>Role</th><th>Type</th><th>Value</th><th>Label</th><th>Open</th></tr></thead><tbody>{% for item in active_list_items %}<tr class="inventory-row" data-active-list-key="{{ item.list_name }}|{{ item.item_type }}|{{ item.item_value }}"><td class="table-code">{{ item.list_name }}</td><td>{{ item.list_kind }}</td><td>{{ item.item_type }}</td><td class="table-code">{{ item.item_value }}</td><td>{{ item.item_label or 'n/a' }}</td><td><a class="btn ghost" href="/assets/active-lists/{{ item.list_name }}/{{ item.item_type }}/{{ item.item_value | urlencode }}">View</a></td></tr>{% endfor %}{% if not active_list_items %}<tr><td colspan="6"><div class="empty-box">No active list items saved yet.</div></td></tr>{% endif %}</tbody></table></div></section>
+</div>
+</section>
 
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">Threat intel import</h3>
-                    <p class="panel-subtitle">Load IOC feeds in JSON or CSV to go beyond manual lab seed indicators.</p>
-                </div>
-                <span class="badge sql">Feed</span>
-            </div>
-            <div class="panel-body">
-                <form method="post" action="/assets/threat-intel/import" class="view-stack">
-                    <div class="page-note">Accepted formats: JSON array or CSV with columns like <span class="table-code">indicator_type,indicator,provider,severity,confidence,description,tags</span>.</div>
-                    <textarea name="payload" class="textarea" style="min-height:144px;" placeholder='indicator_type,indicator,provider,severity,confidence,description,tags&#10;ip,203.0.113.25,internal-feed,high,80,Observed SSH brute force,ssh,bruteforce' {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></textarea>
-                    <div class="chip-row"><button type="submit" class="btn ghost" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}>Import TI feed</button></div>
-                </form>
-            </div>
-        </section>
-    </div>
+<section class="asset-section" data-asset-section="cmdb">
+<div class="grid-2">
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">CMDB asset register</h3><p class="panel-subtitle">Asset metadata enriches events with owner, criticality and expected services.</p></div></div><div class="panel-body"><form method="post" action="/assets/cmdb" class="view-stack"><div class="grid-3"><div><label class="hint" for="cmdbAssetId">Asset ID</label><input id="cmdbAssetId" name="asset_id" class="field" placeholder="asset-siem-web" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="cmdbAssetType">Asset type</label><select id="cmdbAssetType" name="asset_type" class="select" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}><option value="server">server</option><option value="workstation">workstation</option><option value="network">network</option><option value="service">service</option><option value="vpn">vpn</option></select></div><div><label class="hint" for="cmdbOsFamily">OS family</label><select id="cmdbOsFamily" name="os_family" class="select" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}><option value="linux">linux</option><option value="windows">windows</option><option value="network">network</option><option value="mixed">mixed</option></select></div></div><div class="grid-3"><div><label class="hint" for="cmdbHostname">Hostname</label><input id="cmdbHostname" name="hostname" class="field" placeholder="siem-web" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="cmdbIp">IP</label><input id="cmdbIp" name="ip" class="field" placeholder="192.168.1.39" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="cmdbOwner">Owner</label><input id="cmdbOwner" name="owner" class="field" placeholder="soc-core" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div></div><div class="grid-3"><div><label class="hint" for="cmdbCriticality">Criticality</label><select id="cmdbCriticality" name="criticality" class="select" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}><option value="medium">medium</option><option value="high">high</option><option value="critical">critical</option><option value="low">low</option></select></div><div><label class="hint" for="cmdbEnvironment">Environment</label><select id="cmdbEnvironment" name="environment" class="select" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}><option value="prod">prod</option><option value="stage">stage</option><option value="lab">lab</option><option value="dev">dev</option></select></div><div><label class="hint" for="cmdbService">Business service</label><input id="cmdbService" name="business_service" class="field" placeholder="Rdegon SIEM Web" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div></div><div class="grid-2"><div><label class="hint" for="cmdbExpectedPorts">Expected ports</label><input id="cmdbExpectedPorts" name="expected_ports" class="field" placeholder="22,443,8443" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="cmdbTags">Tags</label><input id="cmdbTags" name="tags" class="field" placeholder="edge,critical-asset,vpn" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div></div><div><label class="hint" for="cmdbNotes">Notes</label><textarea id="cmdbNotes" name="notes" class="textarea" style="min-height:96px;" placeholder="Internet-facing service with SIEM UI access." {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></textarea></div><div class="chip-row"><button type="submit" class="btn primary" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}>Save CMDB asset</button></div></form></div></section>
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Import and sync</h3><p class="panel-subtitle">Load CMDB data or create provisional records from observed telemetry.</p></div></div><div class="panel-body view-stack"><form method="post" action="/assets/cmdb/import" class="view-stack"><textarea name="payload" class="textarea" style="min-height:132px;" placeholder='[{"asset_id":"asset-dc-01","hostname":"dc-01","ip":"10.10.10.10","criticality":"critical"}]' {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></textarea><div class="chip-row"><button type="submit" class="btn ghost" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}>Import CMDB records</button></div></form><form method="post" action="/assets/cmdb/sync-observed" class="view-stack"><div class="grid-2"><div><label class="hint" for="syncObservedHours">Lookback hours</label><input id="syncObservedHours" name="hours" class="field" value="72" type="number" min="1" max="720" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="syncObservedLimit">Max records</label><input id="syncObservedLimit" name="limit" class="field" value="200" type="number" min="1" max="1000" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div></div><div class="chip-row"><button type="submit" class="btn ghost" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}>Sync observed assets</button></div></form></div></section>
+</div>
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Current CMDB assets</h3><p class="panel-subtitle">Context merged into events and reused in detections and incident grouping.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Asset ID</th><th>Hostname / IP</th><th>Owner</th><th>Criticality</th><th>Service</th><th>Open</th></tr></thead><tbody>{% for item in cmdb_assets %}<tr class="inventory-row" data-cmdb-asset-id="{{ item.asset_id }}"><td class="table-code">{{ item.asset_id }}</td><td>{{ item.hostname or 'n/a' }}{% if item.ip %}<div class="page-note">{{ item.ip }}</div>{% endif %}</td><td>{{ item.owner or 'n/a' }}</td><td><span class="severity sev-{{ item.criticality if item.criticality in ['critical','high','medium','low'] else 'info' }}">{{ item.criticality or 'medium' }}</span></td><td>{{ item.business_service or 'n/a' }}</td><td><a class="btn ghost" href="/assets/cmdb/{{ item.asset_id }}">View</a></td></tr>{% endfor %}{% if not cmdb_assets %}<tr><td colspan="6"><div class="empty-box">CMDB is empty.</div></td></tr>{% endif %}</tbody></table></div></section>
+</section>
 
-    <div class="grid-2">
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">Active lists</h3>
-                    <p class="panel-subtitle">Lightweight enrichment watchlists for IPs, users, hosts, processes and raw text indicators. Matching events receive watchlist tags during ingest.</p>
-                </div>
-                <span class="badge live">Enrichment</span>
-            </div>
-            <div class="panel-body">
-                <form method="post" action="/assets/active-lists" class="view-stack">
-                    {% if 'active_lists:write' not in user.permissions %}
-                    <div class="page-note">Current role is read-only for enrichment list management.</div>
-                    {% endif %}
-                    <div class="grid-2">
-                        <div>
-                            <label class="hint" for="listName">List name</label>
-                            <input id="listName" name="list_name" class="field" placeholder="vip_admins" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}>
-                        </div>
-                        <div>
-                            <label class="hint" for="listKind">List role</label>
-                            <select id="listKind" name="list_kind" class="select" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}>
-                                <option value="watch">watch</option>
-                                <option value="allow">allow</option>
-                                <option value="deny">deny</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="grid-2">
-                        <div>
-                            <label class="hint" for="itemType">Item type</label>
-                            <select id="itemType" name="item_type" class="select" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}>
-                                <option value="ip">ip</option>
-                                <option value="user">user</option>
-                                <option value="host">host</option>
-                                <option value="process">process</option>
-                                <option value="raw">raw</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="grid-3">
-                        <div>
-                            <label class="hint" for="itemValue">Item value</label>
-                            <input id="itemValue" name="item_value" class="field" placeholder="192.168.1.39" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}>
-                        </div>
-                        <div>
-                            <label class="hint" for="itemLabel">Label</label>
-                            <input id="itemLabel" name="item_label" class="field" placeholder="Web node" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}>
-                        </div>
-                        <div>
-                            <label class="hint" for="itemTags">Tags</label>
-                            <input id="itemTags" name="tags" class="field" placeholder="vip,critical-asset" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}>
-                        </div>
-                    </div>
-                    <div class="chip-row">
-                        <button type="submit" class="btn primary" {% if 'active_lists:write' not in user.permissions %}disabled{% endif %}>Save active list item</button>
-                    </div>
-                </form>
-            </div>
-        </section>
+<section class="asset-section" data-asset-section="threat-intel">
+<div class="grid-2">
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Threat intel feed</h3><p class="panel-subtitle">IOC register used to enrich events across IPs, hosts, users, processes and raw markers.</p></div></div><div class="panel-body"><form method="post" action="/assets/threat-intel" class="view-stack"><div class="grid-3"><div><label class="hint" for="tiType">Indicator type</label><select id="tiType" name="indicator_type" class="select" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}><option value="ip">ip</option><option value="host">host</option><option value="user">user</option><option value="process">process</option><option value="raw">raw</option></select></div><div><label class="hint" for="tiValue">Indicator</label><input id="tiValue" name="indicator" class="field" placeholder="185.220.101.4" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="tiProvider">Provider</label><input id="tiProvider" name="provider" class="field" placeholder="internal-ti" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></div></div><div class="grid-3"><div><label class="hint" for="tiSeverity">Severity</label><select id="tiSeverity" name="severity" class="select" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}><option value="medium">medium</option><option value="high">high</option><option value="critical">critical</option><option value="low">low</option></select></div><div><label class="hint" for="tiConfidence">Confidence</label><input id="tiConfidence" name="confidence" type="number" min="0" max="100" class="field" value="75" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></div><div><label class="hint" for="tiTags">Tags</label><input id="tiTags" name="tags" class="field" placeholder="tor,malware-c2" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></div></div><div><label class="hint" for="tiDescription">Description</label><textarea id="tiDescription" name="description" class="textarea" style="min-height:96px;" placeholder="Observed in failed SSH and firewall-probe activity." {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></textarea></div><div class="chip-row"><button type="submit" class="btn primary" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}>Save indicator</button></div></form></div></section>
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Threat intel import</h3><p class="panel-subtitle">Load IOC feeds in JSON or CSV to go beyond lab seed indicators.</p></div></div><div class="panel-body"><form method="post" action="/assets/threat-intel/import" class="view-stack"><textarea name="payload" class="textarea" style="min-height:132px;" placeholder='indicator_type,indicator,provider,severity,confidence,description,tags&#10;ip,203.0.113.25,internal-feed,high,80,Observed SSH brute force,ssh,bruteforce' {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></textarea><div class="chip-row"><button type="submit" class="btn ghost" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}>Import TI feed</button></div></form></div></section>
+</div>
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Threat intel indicators</h3><p class="panel-subtitle">Indicators matched against event IPs, hosts, users, processes and raw content.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Type</th><th>Indicator</th><th>Provider</th><th>Severity</th><th>Confidence</th><th>Open</th></tr></thead><tbody>{% for item in threat_intel_entries %}<tr class="inventory-row" data-ti-key="{{ item.indicator_type }}|{{ item.indicator }}"><td>{{ item.indicator_type }}</td><td class="table-code">{{ item.indicator }}</td><td>{{ item.provider or 'n/a' }}</td><td><span class="severity sev-{{ item.severity if item.severity in ['critical','high','medium','low'] else 'info' }}">{{ item.severity or 'medium' }}</span></td><td>{{ item.confidence }}</td><td><a class="btn ghost" href="/assets/threat-intel/{{ item.indicator_type }}/{{ item.indicator | urlencode }}">View</a></td></tr>{% endfor %}{% if not threat_intel_entries %}<tr><td colspan="6"><div class="empty-box">Threat intel feed is empty.</div></td></tr>{% endif %}</tbody></table></div></section>
+</section>
 
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">Current watchlist items</h3>
-                    <p class="panel-subtitle">This inventory feeds enrichment and will later be reused for allow/deny detection logic.</p>
-                </div>
-            </div>
-            <div class="panel-body table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>List</th>
-                            <th>Role</th>
-                            <th>Type</th>
-                            <th>Value</th>
-                            <th>Label</th>
-                            <th>Tags</th>
-                            <th>Updated</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for item in active_list_items %}
-                        <tr>
-                            <td class="table-code">{{ item.list_name }}</td>
-                            <td>{{ item.list_kind }}</td>
-                            <td>{{ item.item_type }}</td>
-                            <td class="table-code">{{ item.item_value }}</td>
-                            <td>{{ item.item_label or 'n/a' }}</td>
-                            <td>{{ item.tags | join(', ') if item.tags else 'n/a' }}</td>
-                            <td data-ts="{{ item.updated_ts }}">{{ item.updated_ts }}</td>
-                        </tr>
-                        {% endfor %}
-                        {% if not active_list_items %}
-                        <tr><td colspan="7"><div class="empty-box">No active list items saved yet.</div></td></tr>
-                        {% endif %}
-                    </tbody>
-                </table>
-            </div>
-        </section>
-    </div>
+<section class="asset-section" data-asset-section="overview">
+<div class="grid-2">
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Windows collection foundation</h3><p class="panel-subtitle">Normalizer coverage for common Windows Security, Sysmon and PowerShell shapes is already prepared.</p></div><span class="badge live">Windows</span></div><div class="panel-body"><div class="kv-list"><div class="kv"><div class="kv-key">Supported IDs</div><div class="kv-value">4624, 4625, 4688, 4698, 4720, 4728/4732/4756, 5156/5157, 7045, 1102, Sysmon 1/3/13.</div></div><div class="kv"><div class="kv-key">Transport</div><div class="kv-value">HTTP ingest with JSON payloads or syslog/file forwarders that ship Windows Event XML inside the message field.</div></div><div class="kv"><div class="kv-key">Collector script</div><div class="kv-value"><span class="mono">deploy/windows/rdegon-siem-collector.ps1</span> posts Security/System/Application/Sysmon/PowerShell events into <span class="mono">/ingest/json</span>.</div></div></div></div></section>
+<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Enrichment and SOC usage</h3><p class="panel-subtitle">CMDB and TI are applied during writing, then reused in Event Console and incident correlation.</p></div></div><div class="panel-body"><div class="kv-list"><div class="kv"><div class="kv-key">CMDB</div><div class="kv-value">Maps observed hosts or IPs to owner, criticality, environment and service. These fields become searchable in <span class="mono">events_view</span>.</div></div><div class="kv"><div class="kv-key">Threat intel</div><div class="kv-value">Matches IPs, hosts, users, processes and raw substrings. Matching events receive searchable fields such as <span class="mono">ti_indicator</span>.</div></div><div class="kv"><div class="kv-key">Port monitoring</div><div class="kv-value">Firewall blocks and SSH events are normalized with target-port context so analysts can see which services are being targeted.</div></div></div></div></section>
+</div>
+</section>
 
-    <div class="grid-2">
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">CMDB asset register</h3>
-                    <p class="panel-subtitle">Asset metadata that will enrich events with owner, criticality, environment and expected services.</p>
-                </div>
-                <span class="badge live">CMDB</span>
-            </div>
-            <div class="panel-body">
-                <form method="post" action="/assets/cmdb" class="view-stack">
-                    {% if 'cmdb:write' not in user.permissions %}
-                    <div class="page-note">Current role is read-only for CMDB management.</div>
-                    {% endif %}
-                    <div class="grid-3">
-                        <div><label class="hint" for="cmdbAssetId">Asset ID</label><input id="cmdbAssetId" name="asset_id" class="field" placeholder="asset-siem-web" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div>
-                        <div><label class="hint" for="cmdbAssetType">Asset type</label><select id="cmdbAssetType" name="asset_type" class="select" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}><option value="server">server</option><option value="workstation">workstation</option><option value="network">network</option><option value="service">service</option><option value="vpn">vpn</option></select></div>
-                        <div><label class="hint" for="cmdbOsFamily">OS family</label><select id="cmdbOsFamily" name="os_family" class="select" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}><option value="linux">linux</option><option value="windows">windows</option><option value="network">network</option><option value="mixed">mixed</option></select></div>
-                    </div>
-                    <div class="grid-3">
-                        <div><label class="hint" for="cmdbHostname">Hostname</label><input id="cmdbHostname" name="hostname" class="field" placeholder="siem-web" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div>
-                        <div><label class="hint" for="cmdbIp">IP</label><input id="cmdbIp" name="ip" class="field" placeholder="192.168.1.39" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div>
-                        <div><label class="hint" for="cmdbOwner">Owner</label><input id="cmdbOwner" name="owner" class="field" placeholder="soc-core" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div>
-                    </div>
-                    <div class="grid-3">
-                        <div><label class="hint" for="cmdbCriticality">Criticality</label><select id="cmdbCriticality" name="criticality" class="select" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}><option value="medium">medium</option><option value="high">high</option><option value="critical">critical</option><option value="low">low</option></select></div>
-                        <div><label class="hint" for="cmdbEnvironment">Environment</label><select id="cmdbEnvironment" name="environment" class="select" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}><option value="prod">prod</option><option value="stage">stage</option><option value="lab">lab</option><option value="dev">dev</option></select></div>
-                        <div><label class="hint" for="cmdbService">Business service</label><input id="cmdbService" name="business_service" class="field" placeholder="Rdegon SIEM Web" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div>
-                    </div>
-                    <div class="grid-2">
-                        <div><label class="hint" for="cmdbExpectedPorts">Expected ports</label><input id="cmdbExpectedPorts" name="expected_ports" class="field" placeholder="22,443,8443" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div>
-                        <div><label class="hint" for="cmdbTags">Tags</label><input id="cmdbTags" name="tags" class="field" placeholder="edge,critical-asset,vpn" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></div>
-                    </div>
-                    <div>
-                        <label class="hint" for="cmdbNotes">Notes</label>
-                        <textarea id="cmdbNotes" name="notes" class="textarea" style="min-height:96px;" placeholder="Internet-facing service with SIEM UI access." {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}></textarea>
-                    </div>
-                    <div class="chip-row"><button type="submit" class="btn primary" {% if 'cmdb:write' not in user.permissions %}disabled{% endif %}>Save CMDB asset</button></div>
-                </form>
-            </div>
-        </section>
-
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">Threat intel feed</h3>
-                    <p class="panel-subtitle">IOC register used to enrich events and promote high-priority detections across IPs, hosts, users, processes and raw markers.</p>
-                </div>
-                <span class="badge sql">TI</span>
-            </div>
-            <div class="panel-body">
-                <form method="post" action="/assets/threat-intel" class="view-stack">
-                    {% if 'threat_intel:write' not in user.permissions %}
-                    <div class="page-note">Current role is read-only for threat intel management.</div>
-                    {% endif %}
-                    <div class="grid-3">
-                        <div><label class="hint" for="tiType">Indicator type</label><select id="tiType" name="indicator_type" class="select" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}><option value="ip">ip</option><option value="host">host</option><option value="user">user</option><option value="process">process</option><option value="raw">raw</option></select></div>
-                        <div><label class="hint" for="tiValue">Indicator</label><input id="tiValue" name="indicator" class="field" placeholder="185.220.101.4" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></div>
-                        <div><label class="hint" for="tiProvider">Provider</label><input id="tiProvider" name="provider" class="field" placeholder="internal-ti" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></div>
-                    </div>
-                    <div class="grid-3">
-                        <div><label class="hint" for="tiSeverity">Severity</label><select id="tiSeverity" name="severity" class="select" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}><option value="medium">medium</option><option value="high">high</option><option value="critical">critical</option><option value="low">low</option></select></div>
-                        <div><label class="hint" for="tiConfidence">Confidence</label><input id="tiConfidence" name="confidence" type="number" min="0" max="100" class="field" value="75" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></div>
-                        <div><label class="hint" for="tiTags">Tags</label><input id="tiTags" name="tags" class="field" placeholder="tor,malware-c2" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></div>
-                    </div>
-                    <div>
-                        <label class="hint" for="tiDescription">Description</label>
-                        <textarea id="tiDescription" name="description" class="textarea" style="min-height:96px;" placeholder="Observed in failed SSH and firewall-probe activity." {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}></textarea>
-                    </div>
-                    <div class="chip-row"><button type="submit" class="btn primary" {% if 'threat_intel:write' not in user.permissions %}disabled{% endif %}>Save indicator</button></div>
-                </form>
-            </div>
-        </section>
-    </div>
-
-    <div class="grid-2">
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">Current CMDB assets</h3>
-                    <p class="panel-subtitle">Context that is merged into events during writing and later reused in detections and incident grouping.</p>
-                </div>
-            </div>
-            <div class="panel-body table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Asset ID</th>
-                            <th>Hostname / IP</th>
-                            <th>Owner</th>
-                            <th>Criticality</th>
-                            <th>Service</th>
-                            <th>Ports</th>
-                            <th>Updated</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for item in cmdb_assets %}
-                        <tr>
-                            <td class="table-code">{{ item.asset_id }}</td>
-                            <td>{{ item.hostname or 'n/a' }}{% if item.ip %}<div class="page-note">{{ item.ip }}</div>{% endif %}</td>
-                            <td>{{ item.owner or 'n/a' }}</td>
-                            <td><span class="severity sev-{{ item.criticality if item.criticality in ['critical','high','medium','low'] else 'info' }}">{{ item.criticality or 'medium' }}</span></td>
-                            <td>{{ item.business_service or 'n/a' }}</td>
-                            <td>{{ item.expected_ports | join(', ') if item.expected_ports else 'n/a' }}</td>
-                            <td data-ts="{{ item.updated_ts }}">{{ item.updated_ts }}</td>
-                        </tr>
-                        {% endfor %}
-                        {% if not cmdb_assets %}
-                        <tr><td colspan="7"><div class="empty-box">CMDB is empty.</div></td></tr>
-                        {% endif %}
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">Threat intel indicators</h3>
-                    <p class="panel-subtitle">Indicators matched against event IPs, hosts, users, processes and raw content.</p>
-                </div>
-            </div>
-            <div class="panel-body table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Type</th>
-                            <th>Indicator</th>
-                            <th>Provider</th>
-                            <th>Severity</th>
-                            <th>Confidence</th>
-                            <th>Updated</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for item in threat_intel_entries %}
-                        <tr>
-                            <td>{{ item.indicator_type }}</td>
-                            <td class="table-code">{{ item.indicator }}</td>
-                            <td>{{ item.provider or 'n/a' }}</td>
-                            <td><span class="severity sev-{{ item.severity if item.severity in ['critical','high','medium','low'] else 'info' }}">{{ item.severity or 'medium' }}</span></td>
-                            <td>{{ item.confidence }}</td>
-                            <td data-ts="{{ item.updated_ts }}">{{ item.updated_ts }}</td>
-                        </tr>
-                        {% endfor %}
-                        {% if not threat_intel_entries %}
-                        <tr><td colspan="6"><div class="empty-box">Threat intel feed is empty.</div></td></tr>
-                        {% endif %}
-                    </tbody>
-                </table>
-            </div>
-        </section>
-    </div>
-
-    <section class="panel">
-        <div class="panel-header">
-            <div>
-                <h3 class="panel-title">Detection rule catalog</h3>
-                <p class="panel-subtitle">Sigma-oriented content pack with runtime thresholds, entity keys, verification conditions, and links into the Event Console.</p>
-            </div>
-        </div>
-        <div class="panel-body">
-            <div class="rule-catalog">
-                {% for rule in detection_rules %}
-                <article class="rule-card">
-                    <div class="rule-main">
-                        <div class="rule-title-row">
-                            <span class="rule-id">ID {{ rule.id }}</span>
-                            <div style="font-weight:700; font-size:20px;">{{ rule.title }}</div>
-                            <span class="severity sev-{{ rule.level }}">{{ rule.level }}</span>
-                        </div>
-                        <div class="page-note">{{ rule.description or 'Sigma-derived detection rule.' }}</div>
-                        <div class="chip-row">
-                            <span class="chip">{{ rule.sigma_id or 'custom sigma' }}</span>
-                            <span class="chip">{{ rule.entity_field }}</span>
-                            {% for tag in rule.tags[:4] %}
-                            <span class="chip">{{ tag }}</span>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    <div class="rule-meta-stack">
-                        <div class="rule-meta-grid">
-                            <div class="rule-meta-card">
-                                <div class="hint">Logsource</div>
-                                <div class="page-note"><strong>product:</strong> {{ rule.logsource_product or 'n/a' }}</div>
-                                <div class="page-note"><strong>service:</strong> {{ rule.logsource_service or 'n/a' }}</div>
-                                {% if rule.logsource_category %}
-                                <div class="page-note"><strong>category:</strong> {{ rule.logsource_category }}</div>
-                                {% endif %}
-                            </div>
-                            <div class="rule-meta-card">
-                                <div class="hint">Threshold</div>
-                                <div class="page-note"><strong>count:</strong> {{ rule.threshold }}</div>
-                                <div class="page-note"><strong>window:</strong> {{ rule.window_s }} sec</div>
-                                <div class="page-note"><strong>entity:</strong> {{ rule.entity_field }}</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="rule-meta-stack rule-query">
-                        <div class="rule-meta-card">
-                            <div class="hint">Verification</div>
-                            <div class="page-note">24h hits: <strong>{{ rule.match_hits_24h }}</strong></div>
-                            <div class="page-note">Alert rows: <strong>{{ rule.alert_hits_total }}</strong></div>
-                            <div class="page-note">Last alert: <strong>{{ rule.last_alert_ts or 'n/a' }}</strong></div>
-                        </div>
-                        <details>
-                            <summary>Verification query</summary>
-                            <div class="sql-box mono">{{ rule.verification_query }}</div>
-                        </details>
-                    </div>
-                    <div class="rule-actions">
-                        <button type="button" class="btn ghost" data-test-rule="{{ rule.id }}" {% if 'rules:test' not in user.permissions %}disabled{% endif %}>Test</button>
-                        <a class="btn ghost" href="{{ rule.events_link }}">Open in Events</a>
-                    </div>
-                </article>
-                {% endfor %}
-                {% if not detection_rules %}
-                <div class="empty-box">Detection rule catalog is empty.</div>
-                {% endif %}
-            </div>
-        </div>
-    </section>
-
-    <div class="grid-2">
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">Windows collection foundation</h3>
-                    <p class="panel-subtitle">The normalizer now understands common Windows Security / Sysmon / PowerShell shapes from JSON and XML. Use any collector that can forward Winlogbeat-style JSON or Event XML into ingest.</p>
-                </div>
-                <span class="badge live">Windows</span>
-            </div>
-            <div class="panel-body">
-                <div class="kv-list">
-                    <div class="kv"><div class="kv-key">Supported IDs</div><div class="kv-value">4624, 4625, 4688, 4698, 4720, 4728/4732/4756, 5156/5157, 7045, 1102, Sysmon 1/3/13.</div></div>
-                    <div class="kv"><div class="kv-key">Transport</div><div class="kv-value">HTTP ingest with JSON payloads, or syslog/file forwarders that ship Windows Event XML in the message field.</div></div>
-                    <div class="kv"><div class="kv-key">Built-in detections</div><div class="kv-value">Logon failure burst, audit log cleared, privileged group membership change, suspicious PowerShell encoded command, service installation, user creation.</div></div>
-                    <div class="kv"><div class="kv-key">Collector script</div><div class="kv-value"><span class="mono">deploy/windows/rdegon-siem-collector.ps1</span> posts Security/System/Application/Sysmon/PowerShell events directly into <span class="mono">/ingest/json</span> and can install a scheduled task.</div></div>
-                </div>
-            </div>
-        </section>
-        <section class="panel">
-            <div class="panel-header">
-                <div>
-                    <h3 class="panel-title">Enrichment and SOC usage</h3>
-                    <p class="panel-subtitle">CMDB and TI data are applied during writing, then reused in Event Console, investigations and batch detections.</p>
-                </div>
-            </div>
-            <div class="panel-body">
-                <div class="kv-list">
-                    <div class="kv"><div class="kv-key">CMDB</div><div class="kv-value">Maps observed hosts or IPs to owner, criticality, environment and service. These fields become searchable in <span class="mono">events_view</span>.</div></div>
-                    <div class="kv"><div class="kv-key">Threat intel</div><div class="kv-value">Matches IPs, hosts, users, processes and raw substrings. Matching events receive TI tags and searchable fields like <span class="mono">ti_indicator</span> and <span class="mono">ti_provider</span>.</div></div>
-                    <div class="kv"><div class="kv-key">Port monitoring</div><div class="kv-value">Firewall blocks and SSH events are normalized with target port context so analysts can track which ports are probed and what service is likely being targeted.</div></div>
-                </div>
-            </div>
-        </section>
-    </div>
-
-    <section class="panel">
-        <div class="panel-header">
-            <div>
-                <h3 class="panel-title">Observed device inventory</h3>
-                <p class="panel-subtitle">Each row is a reporting source observed during the last 24 hours, with a direct pivot into Events.</p>
-            </div>
-        </div>
-        <div class="panel-body asset-layout">
-            <div class="table-wrap">
-                <table id="assetTable">
-                    <thead>
-                        <tr>
-                            <th>Asset</th>
-                            <th>Events</th>
-                            <th>Notable</th>
-                            <th>auditd</th>
-                            <th>Last seen</th>
-                            <th>Top categories</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for asset in assets %}
-                        <tr class="asset-row {% if loop.first %}active{% endif %}" data-asset-index="{{ loop.index0 }}">
-                            <td class="mono">{{ asset.asset }}</td>
-                            <td>{{ asset.events }}</td>
-                            <td>{{ asset.notable_events }}</td>
-                            <td>{{ asset.audit_events }}</td>
-                            <td data-ts="{{ asset.last_seen }}">{{ asset.last_seen }}</td>
-                            <td>{{ asset.categories | join(', ') }}</td>
-                        </tr>
-                        {% endfor %}
-                        {% if not assets %}
-                        <tr><td colspan="6"><div class="empty-box">No active assets were observed during the selected period.</div></td></tr>
-                        {% endif %}
-                    </tbody>
-                </table>
-            </div>
-            <aside class="panel" style="min-height:100%;">
-                <div class="panel-header"><div><h3 class="panel-title">Device details</h3><p class="panel-subtitle">Selected source profile and quick pivots.</p></div></div>
-                <div class="panel-body" id="assetDetailPanel"><div class="asset-detail-empty">Select a device row to inspect recent categories, products and open its events.</div></div>
-            </aside>
-        </div>
-    </section>
-
-    <section class="panel">
-        <div class="panel-header">
-            <div>
-                <h3 class="panel-title">Normalizer catalog</h3>
-                <p class="panel-subtitle">Enabled normalizer rules with matcher expressions and UEM mapping payloads.</p>
-            </div>
-        </div>
-        <div class="panel-body">
-            <div class="normalizer-list">
-                {% for rule in normalizer_rules %}
-                <details class="normalizer-card">
-                    <summary style="cursor:pointer; list-style:none;">
-                        <div class="rule-title-row">
-                            <span class="rule-id">ID {{ rule.id }}</span>
-                            <div style="font-weight:700;">{{ rule.source_type or 'any source' }}</div>
-                            <span class="chip">priority {{ rule.priority }}</span>
-                        </div>
-                    </summary>
-                    <div class="view-stack" style="margin-top:14px;">
-                        <div class="rule-meta-card">
-                            <div class="hint">Matcher</div>
-                            <div class="sql-box mono" style="margin-top:0;">{{ rule.event_matcher or 'true' }}</div>
-                        </div>
-                        <div class="rule-meta-card">
-                            <div class="hint">UEM mapping</div>
-                            <div class="sql-box mono" style="margin-top:0;">{{ rule.uem_mapping }}</div>
-                        </div>
-                    </div>
-                </details>
-                {% endfor %}
-                {% if not normalizer_rules %}
-                <div class="empty-box">No enabled normalizer rules found.</div>
-                {% endif %}
-            </div>
-        </div>
-    </section>
 </div>
 {% endblock %}
 {% block extra_scripts %}
 <script>
-const assetsData = {{ assets | tojson }};
-const sigmaDraftDefault = {{ rule_form.sigma_yaml | tojson }};
-const sigmaYaml = document.getElementById('sigmaYaml');
-const resetSigmaDraft = document.getElementById('resetSigmaDraft');
-const ruleTestOutput = document.getElementById('ruleTestOutput');
-const assetDetailPanel = document.getElementById('assetDetailPanel');
-if (resetSigmaDraft) {
-    resetSigmaDraft.addEventListener('click', () => {
-        sigmaYaml.value = sigmaDraftDefault;
-    });
-}
-document.querySelectorAll('[data-test-rule]').forEach((button) => {
-    button.addEventListener('click', async () => {
-        const ruleId = button.dataset.testRule;
-        button.disabled = true;
-        ruleTestOutput.textContent = `Testing rule ${ruleId}...`;
-        try {
-            const response = await fetch(`/api/rules/${ruleId}/test`, { method: 'POST' });
-            const payload = await response.json();
-            if (!response.ok) {
-                throw new Error(payload.error || 'Rule test failed');
-            }
-            ruleTestOutput.textContent = `Rule ${payload.rule_id}: ${payload.title}\n24h matches: ${payload.hits_24h}\nLast alert: ${payload.last_alert_ts || 'n/a'}\nVerification query: ${payload.verification_query}\nEvents link: ${payload.events_link}`;
-        } catch (error) {
-            ruleTestOutput.textContent = error.message || String(error);
-        } finally {
-            button.disabled = false;
-        }
-    });
-});
-function renderAssetDetail(index) {
-    const asset = assetsData[index];
-    if (!asset || !assetDetailPanel) return;
-    const cmdbBlock = asset.cmdb_asset_id ? `
-        <div style="margin-top:14px;">
-            <div class="hint">CMDB context</div>
-            <div class="kv-list">
-                <div class="kv"><div class="kv-key">Asset ID</div><div class="kv-value">${escapeHtml(asset.cmdb_asset_id || '')}</div></div>
-                <div class="kv"><div class="kv-key">Owner</div><div class="kv-value">${escapeHtml(asset.cmdb_owner || 'n/a')}</div></div>
-                <div class="kv"><div class="kv-key">Criticality</div><div class="kv-value">${escapeHtml(asset.cmdb_criticality || 'n/a')}</div></div>
-                <div class="kv"><div class="kv-key">Environment</div><div class="kv-value">${escapeHtml(asset.cmdb_environment || 'n/a')}</div></div>
-                <div class="kv"><div class="kv-key">Service</div><div class="kv-value">${escapeHtml(asset.cmdb_service || 'n/a')}</div></div>
-                <div class="kv"><div class="kv-key">Expected ports</div><div class="kv-value">${escapeHtml((asset.cmdb_expected_ports || []).join(', ') || 'n/a')}</div></div>
-            </div>
-        </div>
-    ` : `<div class="page-note" style="margin-top:14px;">No CMDB context linked to this observed asset yet.</div>`;
-    assetDetailPanel.innerHTML = `
-        <div class="chip-row" style="margin-bottom:14px;">
-            <span class="chip">${escapeHtml(asset.asset)}</span>
-            <span class="chip">${Number(asset.events || 0)} events</span>
-            <span class="chip">${Number(asset.audit_events || 0)} auditd</span>
-            ${asset.cmdb_criticality ? `<span class="chip">${escapeHtml(asset.cmdb_criticality)}</span>` : ''}
-        </div>
-        <div class="kv-list">
-            <div class="kv"><div class="kv-key">Last seen</div><div class="kv-value">${escapeHtml(formatDisplayTimestamp(asset.last_seen || ''))}</div></div>
-            <div class="kv"><div class="kv-key">Notable events</div><div class="kv-value">${Number(asset.notable_events || 0)}</div></div>
-            <div class="kv"><div class="kv-key">Products</div><div class="kv-value">${escapeHtml((asset.products || []).join(', ') || 'n/a')}</div></div>
-            <div class="kv"><div class="kv-key">Categories</div><div class="kv-value">${escapeHtml((asset.categories || []).join(', ') || 'n/a')}</div></div>
-        </div>
-        ${cmdbBlock}
-        <div class="chip-row" style="margin-top:14px;">
-            <a class="btn ghost" href="/events?q=${encodeURIComponent(`log_source = '${asset.asset}'`)}">Open events</a>
-        </div>
-    `;
-}
-document.querySelectorAll('.asset-row').forEach((row) => {
-    row.addEventListener('click', () => {
-        document.querySelectorAll('.asset-row').forEach((node) => node.classList.remove('active'));
-        row.classList.add('active');
-        renderAssetDetail(Number(row.dataset.assetIndex));
-    });
-});
-if (assetsData.length) renderAssetDetail(0);
-applyTimestampFormatting(document);
+const assetsData={{ assets | tojson }};const sigmaDraftDefault={{ rule_form.sigma_yaml | tojson }};const assetTab={{ asset_tab | tojson }};const focusKind={{ focus_kind | tojson }};const focusId={{ focus_id | tojson }};const sigmaYaml=document.getElementById('sigmaYaml');const resetSigmaDraft=document.getElementById('resetSigmaDraft');const ruleTestOutput=document.getElementById('ruleTestOutput');const assetDetailPanel=document.getElementById('assetDetailPanel');
+function showAssetTab(tab){document.querySelectorAll('[data-asset-section]').forEach((section)=>{section.classList.toggle('active',section.dataset.assetSection===tab);});}
+if(resetSigmaDraft&&sigmaYaml){resetSigmaDraft.addEventListener('click',()=>{sigmaYaml.value=sigmaDraftDefault;});}
+if(ruleTestOutput){document.querySelectorAll('[data-test-rule]').forEach((button)=>{button.addEventListener('click',async()=>{const ruleId=button.dataset.testRule;button.disabled=true;ruleTestOutput.textContent=`Testing rule ${ruleId}...`;try{const response=await fetch(`/api/rules/${ruleId}/test`,{method:'POST'});const payload=await response.json();if(!response.ok) throw new Error(payload.error||'Rule test failed');ruleTestOutput.textContent=`Rule ${payload.rule_id}: ${payload.title}\n24h matches: ${payload.hits_24h}\nLast alert: ${payload.last_alert_ts||'n/a'}\nVerification query: ${payload.verification_query}\nEvents link: ${payload.events_link}`;}catch(error){ruleTestOutput.textContent=error.message||String(error);}finally{button.disabled=false;}});});}
+function renderAssetDetail(index){const asset=assetsData[index];if(!asset||!assetDetailPanel) return;const cmdbBlock=asset.cmdb_asset_id?`<div class="kv-list" style="margin-top:14px;"><div class="kv"><div class="kv-key">Asset ID</div><div class="kv-value">${escapeHtml(asset.cmdb_asset_id||'')}</div></div><div class="kv"><div class="kv-key">Owner</div><div class="kv-value">${escapeHtml(asset.cmdb_owner||'n/a')}</div></div><div class="kv"><div class="kv-key">Criticality</div><div class="kv-value">${escapeHtml(asset.cmdb_criticality||'n/a')}</div></div><div class="kv"><div class="kv-key">Service</div><div class="kv-value">${escapeHtml(asset.cmdb_service||'n/a')}</div></div></div>`:`<div class="page-note" style="margin-top:14px;">No CMDB context linked to this observed asset yet.</div>`;assetDetailPanel.innerHTML=`<div class="asset-tabs" style="margin-bottom:14px;"><span class="chip">${escapeHtml(asset.asset)}</span><span class="chip">${Number(asset.events||0)} events</span><span class="chip">${Number(asset.audit_events||0)} auditd</span></div><div class="kv-list"><div class="kv"><div class="kv-key">Last seen</div><div class="kv-value">${escapeHtml(formatDisplayTimestamp(asset.last_seen||''))}</div></div><div class="kv"><div class="kv-key">Notable events</div><div class="kv-value">${Number(asset.notable_events||0)}</div></div><div class="kv"><div class="kv-key">Products</div><div class="kv-value">${escapeHtml((asset.products||[]).join(', ')||'n/a')}</div></div><div class="kv"><div class="kv-key">Categories</div><div class="kv-value">${escapeHtml((asset.categories||[]).join(', ')||'n/a')}</div></div></div>${cmdbBlock}<div class="rule-actions" style="margin-top:14px;"><a class="btn primary" href="/events?q=${encodeURIComponent(`log_source = '${String(asset.asset).replace(/'/g,\"''\")}'`)}">Open events</a><a class="btn ghost" href="/assets/devices/${encodeURIComponent(asset.asset)}">Open dedicated page</a></div>`;}
+document.addEventListener('click',(event)=>{const row=event.target.closest('.asset-row');if(!row) return;document.querySelectorAll('.asset-row').forEach((node)=>node.classList.remove('active'));row.classList.add('active');renderAssetDetail(Number(row.dataset.assetIndex));});
+if(assetsData.length&&assetDetailPanel) renderAssetDetail(0);
+function focusAssetPage(){if(!focusKind||!focusId) return;let selector='';let tab=assetTab||'overview';if(focusKind==='device'){tab='devices';selector=`.asset-row[data-asset-id="${CSS.escape(focusId)}"]`;}else if(focusKind==='rule'){tab='rules';selector=`[data-rule-id="${CSS.escape(focusId)}"]`;}else if(focusKind==='normalizer'){tab='normalizers';selector=`[data-normalizer-id="${CSS.escape(focusId)}"]`;}else if(focusKind==='active-list'){tab='active-lists';selector=`[data-active-list-key="${CSS.escape(focusId)}"]`;}else if(focusKind==='cmdb'){tab='cmdb';selector=`[data-cmdb-asset-id="${CSS.escape(focusId)}"]`;}else if(focusKind==='threat-intel'){tab='threat-intel';selector=`[data-ti-key="${CSS.escape(focusId)}"]`;}else if(focusKind==='collector'){tab='collectors';selector=`[data-collector-id="${CSS.escape(focusId)}"]`;}showAssetTab(tab);const node=selector?document.querySelector(selector):null;if(node){if(focusKind==='device') node.click();if(node.tagName==='DETAILS') node.open=true;node.classList.add('focus-card');node.scrollIntoView({block:'center'});}}
+showAssetTab(assetTab||'overview');focusAssetPage();applyTimestampFormatting(document);
 </script>
 {% endblock %}

@@ -1,154 +1,134 @@
-
 {% extends "base.html" %}
 {% block title %}{{ t['page.dashboards.title'] }} | Rdegon SIEM{% endblock %}
 {% block page_title %}{{ t['page.dashboards.title'] }}{% endblock %}
 {% block page_subtitle %}{{ t['page.dashboards.subtitle'] }}{% endblock %}
+{% block extra_head %}
+<style>
+    .dashboard-grid {
+        display: grid;
+        gap: 18px;
+    }
+    .dashboard-table tbody tr {
+        cursor: pointer;
+    }
+    .chart-empty {
+        min-height: 220px;
+        display: grid;
+        place-items: center;
+        color: var(--text-soft);
+    }
+</style>
+{% endblock %}
 {% block content %}
-<div class="view-stack">
-<div class="grid-4">
-    <section class="kpi"><p class="kpi-label">Open incidents</p><div class="kpi-value">{{ metrics.open_incidents_24h or 0 }}</div><div class="kpi-meta">Aggregated incidents still not closed during the last 24 hours.</div></section>
-    <section class="kpi"><p class="kpi-label">New alerts</p><div class="kpi-value">{{ metrics.new_alerts_24h or 0 }}</div><div class="kpi-meta">Fresh raw alerts waiting for initial triage.</div></section>
-    <section class="kpi"><p class="kpi-label">Events 1h</p><div class="kpi-value">{{ metrics.events_1h or 0 }}</div><div class="kpi-meta">Current ingestion tempo across all monitored nodes.</div></section>
-    <section class="kpi"><p class="kpi-label">TI hits 24h</p><div class="kpi-value">{{ metrics.ti_hits_24h or 0 }}</div><div class="kpi-meta">Events that matched threat intel indicators during the last 24 hours.</div></section>
-</div>
-<div class="grid-2">
-    <section class="panel">
-        <div class="panel-header"><div><h3 class="panel-title">Incident queue</h3><p class="panel-subtitle">Most recent incidents and alerts for analyst triage.</p></div><a class="btn ghost" href="/alerts">Open incidents</a></div>
-        <div class="panel-body table-wrap"><table><thead><tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Hits</th><th>Status</th></tr></thead><tbody>{% for alert in recent_alerts %}<tr><td data-ts="{{ alert.ts_last }}">{{ alert.ts_last }}</td><td>{{ alert.rule_name }}</td><td><span class="severity sev-{{ alert.severity }}">{{ alert.severity }}</span></td><td>{{ alert.hits }}</td><td><span class="status-pill">{{ alert.status }}</span></td></tr>{% endfor %}</tbody></table></div>
-    </section>
-    <section class="panel">
-        <div class="panel-header"><div><h3 class="panel-title">Event volume</h3><p class="panel-subtitle">Last 24 hours, one-hour buckets.</p></div></div>
-        <div class="panel-body"><div id="dashboardTimeline" class="timeline-surface"></div><div id="dashboardTimelineMeta" class="page-note" style="margin-top:12px;"></div></div>
-    </section>
-</div>
-<div class="grid-3">
-    <section class="kpi"><p class="kpi-label">Audit events 24h</p><div class="kpi-value">{{ metrics.audit_events_24h or 0 }}</div><div class="kpi-meta">auditd coverage visible in the same event pipeline.</div></section>
-    <section class="kpi"><p class="kpi-label">Critical assets observed</p><div class="kpi-value">{{ metrics.critical_assets_observed_24h or 0 }}</div><div class="kpi-meta">Distinct CMDB assets tagged as high or critical that produced events in the last 24 hours.</div></section>
-    <section class="kpi"><p class="kpi-label">Active sources 24h</p><div class="kpi-value">{{ metrics.active_sources_24h or 0 }}</div><div class="kpi-meta">Unique reporting hosts or log sources seen during the last 24 hours.</div></section>
-</div>
-<div class="grid-3">
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Events by severity</h3><p class="panel-subtitle">Severity distribution for the last 24 hours.</p></div></div><div class="panel-body"><div class="stacked-bar" id="eventsSeverityBar"></div><div class="legend" id="eventsSeverityLegend"></div></div></section>
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Alerts by status</h3><p class="panel-subtitle">SOC workflow state for raw alerts.</p></div></div><div class="panel-body"><div class="stacked-bar" id="alertStatusBar"></div><div class="legend" id="alertStatusLegend"></div></div></section>
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Alerts by severity</h3><p class="panel-subtitle">Which alert levels dominate the queue.</p></div></div><div class="panel-body"><div class="stacked-bar" id="alertSeverityBar"></div><div class="legend" id="alertSeverityLegend"></div></div></section>
-</div>
-<div class="grid-2">
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top sources</h3><p class="panel-subtitle">Most active monitored sources during the last 24 hours.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Source</th><th>Events</th><th>Last seen</th></tr></thead><tbody>{% for source in top_sources %}<tr><td class="mono">{{ source.log_source }}</td><td>{{ source.events }}</td><td data-ts="{{ source.last_seen }}">{{ source.last_seen }}</td></tr>{% endfor %}</tbody></table></div></section>
-    <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top categories</h3><p class="panel-subtitle">Most frequent normalized categories in the event stream.</p></div></div><div class="panel-body"><div class="mini-list">{% set max_events = (top_categories[0].events if top_categories else 1) %}{% for row in top_categories %}<div class="mini-row"><div><div style="font-weight:600;">{{ row.category }}</div><div class="page-note">{{ row.events }} events</div></div><div style="width:160px;"><div class="mini-bar-track"><div class="mini-bar" style="width: {{ (row.events / max_events * 100) if max_events else 0 }}%;"></div></div></div></div>{% endfor %}</div></div></section>
-</div>
-<section class="panel">
-    <div class="panel-header"><div><h3 class="panel-title">Targeted ports</h3><p class="panel-subtitle">Which services are being probed or targeted, and whether the dominant signal is blocked network traffic or password-oriented authentication activity.</p></div></div>
-    <div class="panel-body table-wrap">
-        <table>
-            <thead><tr><th>Port</th><th>Service</th><th>Attempts</th><th>Unique sources</th><th>Signal</th><th>Last seen</th></tr></thead>
-            <tbody>
-                {% for row in top_target_ports %}
-                <tr>
-                    <td class="table-code">{{ row.dst_port }}</td>
-                    <td>{{ row.service }}</td>
-                    <td>{{ row.attempts }}</td>
-                    <td>{{ row.unique_sources }}</td>
-                    <td>{{ row.signal }}</td>
-                    <td data-ts="{{ row.last_seen }}">{{ row.last_seen }}</td>
-                </tr>
-                {% endfor %}
-                {% if not top_target_ports %}
-                <tr><td colspan="6"><div class="empty-box">No targeted port telemetry in the selected window.</div></td></tr>
-                {% endif %}
-            </tbody>
-        </table>
+<div class="view-stack dashboard-grid">
+    <div class="grid-4">
+        <section class="kpi"><p class="kpi-label">Open incidents</p><div class="kpi-value" id="kpiOpenIncidents">{{ metrics.open_incidents_24h or 0 }}</div><div class="kpi-meta">Aggregated incidents that are still not closed in the last 24 hours.</div></section>
+        <section class="kpi"><p class="kpi-label">New alerts</p><div class="kpi-value" id="kpiNewAlerts">{{ metrics.new_alerts_24h or 0 }}</div><div class="kpi-meta">Fresh raw alerts waiting for first analyst review.</div></section>
+        <section class="kpi"><p class="kpi-label">Events 1h</p><div class="kpi-value" id="kpiEvents1h">{{ metrics.events_1h or 0 }}</div><div class="kpi-meta">Current ingestion tempo across monitored infrastructure.</div></section>
+        <section class="kpi"><p class="kpi-label">TI hits 24h</p><div class="kpi-value" id="kpiTiHits">{{ metrics.ti_hits_24h or 0 }}</div><div class="kpi-meta">Events enriched with threat-intel indicators during the last 24 hours.</div></section>
+        <section class="kpi"><p class="kpi-label">Audit events 24h</p><div class="kpi-value" id="kpiAuditEvents">{{ metrics.audit_events_24h or 0 }}</div><div class="kpi-meta">auditd telemetry visible inside the same event pipeline.</div></section>
+        <section class="kpi"><p class="kpi-label">Critical assets observed</p><div class="kpi-value" id="kpiCriticalAssets">{{ metrics.critical_assets_observed_24h or 0 }}</div><div class="kpi-meta">Distinct high or critical CMDB assets seen in telemetry.</div></section>
+        <section class="kpi"><p class="kpi-label">Active sources 24h</p><div class="kpi-value" id="kpiActiveSources">{{ metrics.active_sources_24h or 0 }}</div><div class="kpi-meta">Unique reporting hosts or log sources seen in the last 24 hours.</div></section>
+        <section class="kpi"><p class="kpi-label">Platform status</p><div class="kpi-value" id="kpiPlatformStatus">{{ 'LIVE' if platform_status.clickhouse_ok else 'DOWN' }}</div><div class="kpi-meta" id="kpiPlatformMeta">ClickHouse status and latest event freshness from the frontend polling path.</div></section>
     </div>
-</div>
+
+    <div class="grid-3">
+        <section class="panel">
+            <div class="panel-header"><div><h3 class="panel-title">Events by severity</h3><p class="panel-subtitle">Severity distribution across events for the last 24 hours.</p></div></div>
+            <div class="panel-body"><div class="stacked-bar" id="eventsSeverityBar"></div><div class="legend" id="eventsSeverityLegend"></div></div>
+        </section>
+        <section class="panel">
+            <div class="panel-header"><div><h3 class="panel-title">Alerts by severity</h3><p class="panel-subtitle">Which alert severities dominate the current queue.</p></div></div>
+            <div class="panel-body"><div class="stacked-bar" id="alertSeverityBar"></div><div class="legend" id="alertSeverityLegend"></div></div>
+        </section>
+        <section class="panel">
+            <div class="panel-header"><div><h3 class="panel-title">Alerts by status</h3><p class="panel-subtitle">Lifecycle breakdown of raw alerts in storage.</p></div></div>
+            <div class="panel-body"><div class="stacked-bar" id="alertStatusBar"></div><div class="legend" id="alertStatusLegend"></div></div>
+        </section>
+    </div>
+
+    <div class="grid-2">
+        <section class="panel">
+            <div class="panel-header"><div><h3 class="panel-title">Event volume</h3><p class="panel-subtitle">Last 24 hours, one-hour buckets.</p></div></div>
+            <div class="panel-body">
+                <div id="dashboardTimeline" class="timeline-surface"></div>
+                <div id="dashboardTimelineMeta" class="page-note" style="margin-top:12px;"></div>
+            </div>
+        </section>
+        <section class="panel">
+            <div class="panel-header"><div><h3 class="panel-title">Alert volume</h3><p class="panel-subtitle">New raw alerts by hour during the last 24 hours.</p></div></div>
+            <div class="panel-body">
+                <div id="dashboardAlertTimeline" class="timeline-surface"></div>
+                <div id="dashboardAlertTimelineMeta" class="page-note" style="margin-top:12px;"></div>
+            </div>
+        </section>
+    </div>
+
+    <div class="grid-2">
+        <section class="panel">
+            <div class="panel-header"><div><h3 class="panel-title">Top sources</h3><p class="panel-subtitle">Most active monitored sources during the last 24 hours.</p></div></div>
+            <div class="panel-body table-wrap">
+                <table class="dashboard-table">
+                    <thead><tr><th>Source</th><th>Events</th><th>Last seen</th></tr></thead>
+                    <tbody id="topSourcesBody"></tbody>
+                </table>
+            </div>
+        </section>
+        <section class="panel">
+            <div class="panel-header"><div><h3 class="panel-title">Targeted ports</h3><p class="panel-subtitle">Which services are being probed and whether the dominant signal looks like auth probing or blocked scanning.</p></div></div>
+            <div class="panel-body table-wrap">
+                <table class="dashboard-table">
+                    <thead><tr><th>Port</th><th>Service</th><th>Attempts</th><th>Unique sources</th><th>Signal</th><th>Last seen</th></tr></thead>
+                    <tbody id="topPortsBody"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <div class="grid-2">
+        <section class="panel">
+            <div class="panel-header"><div><h3 class="panel-title">Top categories</h3><p class="panel-subtitle">Most frequent normalized categories in the event stream.</p></div></div>
+            <div class="panel-body"><div class="mini-list" id="topCategoriesList"></div></div>
+        </section>
+        <section class="panel">
+            <div class="panel-header"><div><h3 class="panel-title">Queue preview</h3><p class="panel-subtitle">Most recent incidents. Click a row to jump straight into the full incident queue.</p></div><a class="btn ghost" href="/alerts">Open incidents</a></div>
+            <div class="panel-body table-wrap">
+                <table class="dashboard-table">
+                    <thead><tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Alerts</th><th>Status</th></tr></thead>
+                    <tbody id="recentIncidentsBody"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <section class="panel">
+        <div class="panel-header"><div><h3 class="panel-title">Incident queue</h3><p class="panel-subtitle">Expanded incident preview with navigation into the full incident console.</p></div><a class="btn ghost" href="/alerts">Open incidents</a></div>
+        <div class="panel-body table-wrap">
+            <table class="dashboard-table">
+                <thead><tr><th>Last seen</th><th>Rule</th><th>Severity</th><th>Alerts</th><th>Sources</th><th>Status</th><th>Assignee</th></tr></thead>
+                <tbody id="incidentQueueBody"></tbody>
+            </table>
+        </div>
+    </section>
 </div>
 {% endblock %}
 {% block extra_scripts %}
 <script>
-const timeline = {{ timeline | tojson }};
-const severityRows = {{ severity_breakdown | tojson }}.map((row) => ({ label: row.severity, count: row.cnt }));
-const alertSeverityRows = {{ alert_severity_breakdown | tojson }}.map((row) => ({ label: row.severity, count: row.cnt }));
-const alertStatusRows = {{ alert_status_breakdown | tojson }}.map((row) => ({ label: row.status, count: row.cnt }));
-const timelineContainer = document.getElementById('dashboardTimeline');
-const timelineMeta = document.getElementById('dashboardTimelineMeta');
-function renderDashboardTimeline() {
-    if (!timelineContainer) return;
-    if (!timeline.length) {
-        timelineContainer.innerHTML = '<div class="page-note">No event volume data.</div>';
-        if (timelineMeta) timelineMeta.textContent = '';
-        return;
-    }
-    const width = 760;
-    const height = 220;
-    const paddingX = 18;
-    const paddingTop = 16;
-    const paddingBottom = 44;
-    const innerHeight = height - paddingTop - paddingBottom;
-    const innerWidth = width - (paddingX * 2);
-    const counts = timeline.map((item) => Number(item.cnt || 0));
-    const maxValue = Math.max(...counts, 1);
-    const points = timeline.map((item, index) => {
-        const x = paddingX + ((innerWidth) * (timeline.length === 1 ? 0 : index / (timeline.length - 1)));
-        const y = paddingTop + innerHeight - ((Number(item.cnt || 0) / maxValue) * innerHeight);
-        return { x, y, count: Number(item.cnt || 0), bucket: item.bucket || '' };
-    });
-    const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
-    const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${(height - paddingBottom).toFixed(2)} L ${points[0].x.toFixed(2)} ${(height - paddingBottom).toFixed(2)} Z`;
-    const labels = points.map((point, index) => {
-        const showLabel = index % 4 === 0 || index === points.length - 1;
-        if (!showLabel) return '';
-        const label = formatDisplayTimestamp(point.bucket).slice(11, 16);
-        return `<text x="${point.x.toFixed(2)}" y="${(height - 14).toFixed(2)}" text-anchor="middle" class="timeline-axis-label">${escapeHtml(label)}</text>`;
-    }).join('');
-    const circles = points.map((point, index) => `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4" class="timeline-point" data-index="${index}"></circle>`).join('');
-    timelineContainer.innerHTML = `
-        <svg viewBox="0 0 ${width} ${height}" class="timeline-svg" aria-label="Event volume chart" preserveAspectRatio="none">
-            <defs>
-                <linearGradient id="timelineFill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stop-color="rgba(75,147,255,0.40)"></stop>
-                    <stop offset="100%" stop-color="rgba(75,147,255,0.02)"></stop>
-                </linearGradient>
-            </defs>
-            <line x1="${paddingX}" y1="${height - paddingBottom}" x2="${width - paddingX}" y2="${height - paddingBottom}" class="timeline-axis"></line>
-            <path d="${areaPath}" class="timeline-area"></path>
-            <path d="${linePath}" class="timeline-line"></path>
-            ${circles}
-            ${labels}
-        </svg>
-        <div class="timeline-tooltip" id="dashboardTimelineTooltip"></div>
-    `;
-    const tooltip = document.getElementById('dashboardTimelineTooltip');
-    const svg = timelineContainer.querySelector('svg');
-    const pointNodes = Array.from(timelineContainer.querySelectorAll('.timeline-point'));
-    const latestPoint = points[points.length - 1];
-    const summaryText = `Total ${counts.reduce((sum, value) => sum + value, 0)} events, peak ${maxValue} per hour, latest bucket ${latestPoint ? latestPoint.count : 0}. Hover a point to inspect time and volume.`;
-    function hideTooltip() {
-        pointNodes.forEach((node) => node.classList.remove('is-active'));
-        if (tooltip) tooltip.classList.remove('open');
-        if (timelineMeta) timelineMeta.textContent = summaryText;
-    }
-    function showTooltip(index) {
-        const point = points[index];
-        const node = pointNodes[index];
-        if (!point || !node || !tooltip || !svg) return;
-        pointNodes.forEach((item) => item.classList.toggle('is-active', item === node));
-        const rect = svg.getBoundingClientRect();
-        tooltip.innerHTML = `<strong>${point.count} events</strong><div>${escapeHtml(formatDisplayTimestamp(point.bucket))}</div><div class="page-note">Hour bucket volume</div>`;
-        tooltip.classList.add('open');
-        const rawLeft = (point.x / width) * rect.width + 12;
-        const top = Math.max(36, (point.y / height) * rect.height + 10);
-        const halfWidth = tooltip.offsetWidth / 2;
-        const clampedLeft = Math.max(halfWidth + 8, Math.min(rect.width - halfWidth - 8, rawLeft));
-        tooltip.style.left = `${clampedLeft}px`;
-        tooltip.style.top = `${top}px`;
-    }
-    pointNodes.forEach((node, index) => {
-        node.addEventListener('mouseenter', () => showTooltip(index));
-        node.addEventListener('focus', () => showTooltip(index));
-    });
-    timelineContainer.addEventListener('mouseleave', hideTooltip);
-    svg.addEventListener('blur', hideTooltip, true);
-    if (timelineMeta) {
-        timelineMeta.textContent = summaryText;
-    }
-}
+let dashboardSnapshot = {
+    metrics: {{ metrics | tojson }},
+    timeline: {{ timeline | tojson }},
+    alert_timeline: {{ alert_timeline | tojson }},
+    severity_breakdown: {{ severity_breakdown | tojson }},
+    alert_severity_breakdown: {{ alert_severity_breakdown | tojson }},
+    alert_status_breakdown: {{ alert_status_breakdown | tojson }},
+    top_sources: {{ top_sources | tojson }},
+    top_target_ports: {{ top_target_ports | tojson }},
+    top_categories: {{ top_categories | tojson }},
+    recent_alerts: {{ recent_alerts | tojson }},
+    platform_status: {{ platform_status | tojson }},
+};
+let dashboardRefreshTimer = null;
+
 function renderLegend(containerId, rows) {
     const container = document.getElementById(containerId);
     if (!container) return;
@@ -157,8 +137,9 @@ function renderLegend(containerId, rows) {
         const count = Number(row.count || 0);
         const percent = total ? Math.round((count / total) * 100) : 0;
         return `<div class="legend-row"><span class="legend-swatch" style="background:${row.__color}"></span><span>${escapeHtml(row.label)}</span><strong>${count} <span class="page-note">(${percent}%)</span></strong></div>`;
-    }).join('');
+    }).join('') || '<div class="page-note">No data</div>';
 }
+
 function renderBreakdown(barId, legendId, rows) {
     const bar = document.getElementById(barId);
     if (!bar) return;
@@ -172,14 +153,220 @@ function renderBreakdown(barId, legendId, rows) {
     }).join('') || '<div class="page-note">No data</div>';
     renderLegend(legendId, rows);
 }
-renderDashboardTimeline();
-renderBreakdown('eventsSeverityBar', 'eventsSeverityLegend', severityRows);
-renderBreakdown('alertSeverityBar', 'alertSeverityLegend', alertSeverityRows);
-renderBreakdown('alertStatusBar', 'alertStatusLegend', alertStatusRows);
-window.addEventListener('rdegon:timezone-changed', () => {
-    renderDashboardTimeline();
-    applyTimestampFormatting(document);
+
+function renderTimelineChart(containerId, metaId, rows, emptyText, summaryPrefix) {
+    const container = document.getElementById(containerId);
+    const meta = document.getElementById(metaId);
+    if (!container) return;
+    if (!rows.length) {
+        container.innerHTML = `<div class="chart-empty">${escapeHtml(emptyText)}</div>`;
+        if (meta) meta.textContent = '';
+        return;
+    }
+    const width = 760;
+    const height = 220;
+    const paddingX = 18;
+    const paddingTop = 16;
+    const paddingBottom = 44;
+    const innerHeight = height - paddingTop - paddingBottom;
+    const innerWidth = width - (paddingX * 2);
+    const counts = rows.map((item) => Number(item.cnt || 0));
+    const maxValue = Math.max(...counts, 1);
+    const points = rows.map((item, index) => {
+        const x = paddingX + ((innerWidth) * (rows.length === 1 ? 0 : index / (rows.length - 1)));
+        const y = paddingTop + innerHeight - ((Number(item.cnt || 0) / maxValue) * innerHeight);
+        return { x, y, count: Number(item.cnt || 0), bucket: item.bucket || '' };
+    });
+    const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
+    const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${(height - paddingBottom).toFixed(2)} L ${points[0].x.toFixed(2)} ${(height - paddingBottom).toFixed(2)} Z`;
+    const labels = points.map((point, index) => {
+        const showLabel = index % 4 === 0 || index === points.length - 1;
+        if (!showLabel) return '';
+        const label = formatDisplayTimestamp(point.bucket).slice(11, 16);
+        return `<text x="${point.x.toFixed(2)}" y="${(height - 14).toFixed(2)}" text-anchor="middle" class="timeline-axis-label">${escapeHtml(label)}</text>`;
+    }).join('');
+    const circles = points.map((point, index) => `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4" class="timeline-point" data-index="${index}"></circle>`).join('');
+    container.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" class="timeline-svg" preserveAspectRatio="none">
+            <defs>
+                <linearGradient id="${containerId}Fill" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stop-color="rgba(75,147,255,0.40)"></stop>
+                    <stop offset="100%" stop-color="rgba(75,147,255,0.02)"></stop>
+                </linearGradient>
+            </defs>
+            <line x1="${paddingX}" y1="${height - paddingBottom}" x2="${width - paddingX}" y2="${height - paddingBottom}" class="timeline-axis"></line>
+            <path d="${areaPath}" class="timeline-area" style="fill:url(#${containerId}Fill)"></path>
+            <path d="${linePath}" class="timeline-line"></path>
+            ${circles}
+            ${labels}
+        </svg>
+        <div class="timeline-tooltip" id="${containerId}Tooltip"></div>
+    `;
+    const tooltip = document.getElementById(`${containerId}Tooltip`);
+    const svg = container.querySelector('svg');
+    const pointNodes = Array.from(container.querySelectorAll('.timeline-point'));
+    const latestPoint = points[points.length - 1];
+    const total = counts.reduce((sum, value) => sum + value, 0);
+    const summaryText = `${summaryPrefix}: ${total} total. Hover a point to inspect the exact bucket value.`;
+    function hideTooltip() {
+        pointNodes.forEach((node) => node.classList.remove('is-active'));
+        if (tooltip) tooltip.classList.remove('open');
+        if (meta) meta.textContent = summaryText;
+    }
+    function showTooltip(index) {
+        const point = points[index];
+        const node = pointNodes[index];
+        if (!point || !node || !tooltip || !svg) return;
+        pointNodes.forEach((item) => item.classList.toggle('is-active', item === node));
+        const rect = svg.getBoundingClientRect();
+        tooltip.innerHTML = `<strong>${point.count}</strong><div>${escapeHtml(formatDisplayTimestamp(point.bucket))}</div><div class="page-note">Volume in this bucket</div>`;
+        tooltip.classList.add('open');
+        const rawLeft = (point.x / width) * rect.width + 12;
+        const top = Math.max(36, (point.y / height) * rect.height + 10);
+        const halfWidth = tooltip.offsetWidth / 2;
+        const clampedLeft = Math.max(halfWidth + 8, Math.min(rect.width - halfWidth - 8, rawLeft));
+        tooltip.style.left = `${clampedLeft}px`;
+        tooltip.style.top = `${top}px`;
+        if (meta) meta.textContent = `${formatDisplayTimestamp(point.bucket)}: ${point.count}`;
+    }
+    pointNodes.forEach((node, index) => {
+        node.addEventListener('mouseenter', () => showTooltip(index));
+        node.addEventListener('focus', () => showTooltip(index));
+    });
+    container.addEventListener('mouseleave', hideTooltip);
+    svg.addEventListener('blur', hideTooltip, true);
+    if (meta) meta.textContent = summaryText;
+}
+
+function renderTopSources(rows) {
+    const body = document.getElementById('topSourcesBody');
+    if (!body) return;
+    body.innerHTML = rows.map((row) => `
+        <tr onclick="window.location.href='/events?q=${encodeURIComponent(`log_source = '${String(row.log_source || '').replace(/'/g, "''")}'`)}'">
+            <td class="mono">${escapeHtml(row.log_source || 'unknown')}</td>
+            <td>${Number(row.events || 0)}</td>
+            <td data-ts="${escapeHtml(row.last_seen || '')}">${escapeHtml(row.last_seen || '')}</td>
+        </tr>
+    `).join('') || '<tr><td colspan="3"><div class="empty-box">No sources in the selected window.</div></td></tr>';
+    applyTimestampFormatting(body);
+}
+
+function renderTopPorts(rows) {
+    const body = document.getElementById('topPortsBody');
+    if (!body) return;
+    body.innerHTML = rows.map((row) => `
+        <tr onclick="window.location.href='/events?q=${encodeURIComponent(`dst_port = ${Number(row.dst_port || 0)}`)}'">
+            <td class="table-code">${Number(row.dst_port || 0)}</td>
+            <td>${escapeHtml(row.service || 'custom')}</td>
+            <td>${Number(row.attempts || 0)}</td>
+            <td>${Number(row.unique_sources || 0)}</td>
+            <td>${escapeHtml(row.signal || '')}</td>
+            <td data-ts="${escapeHtml(row.last_seen || '')}">${escapeHtml(row.last_seen || '')}</td>
+        </tr>
+    `).join('') || '<tr><td colspan="6"><div class="empty-box">No targeted ports in the selected window.</div></td></tr>';
+    applyTimestampFormatting(body);
+}
+
+function renderTopCategories(rows) {
+    const container = document.getElementById('topCategoriesList');
+    if (!container) return;
+    const maxEvents = rows.length ? Math.max(...rows.map((row) => Number(row.events || 0)), 1) : 1;
+    container.innerHTML = rows.map((row) => `
+        <div class="mini-row">
+            <div>
+                <div style="font-weight:600;">${escapeHtml(row.category || 'unknown')}</div>
+                <div class="page-note">${Number(row.events || 0)} events</div>
+            </div>
+            <div style="width:160px;">
+                <div class="mini-bar-track"><div class="mini-bar" style="width:${(Number(row.events || 0) / maxEvents) * 100}%;"></div></div>
+            </div>
+        </div>
+    `).join('') || '<div class="empty-box">No category data.</div>';
+}
+
+function incidentTarget(row) {
+    return `/alerts?view=agg&focus=${encodeURIComponent(String(row.agg_id || ''))}`;
+}
+
+function renderIncidentRows(containerId, rows, compact = false) {
+    const body = document.getElementById(containerId);
+    if (!body) return;
+    if (compact) {
+        body.innerHTML = rows.map((row) => `
+            <tr onclick="window.location.href='${incidentTarget(row)}'">
+                <td data-ts="${escapeHtml(row.ts_last || '')}">${escapeHtml(row.ts_last || '')}</td>
+                <td>${escapeHtml(row.rule_name || '')}</td>
+                <td><span class="severity ${severityClass(row.severity_agg)}">${escapeHtml(row.severity_agg || 'info')}</span></td>
+                <td>${Number(row.count_alerts || 0)}</td>
+                <td><span class="status-pill">${escapeHtml(row.status || 'new')}</span></td>
+            </tr>
+        `).join('') || '<tr><td colspan="5"><div class="empty-box">No incidents in the queue.</div></td></tr>';
+    } else {
+        body.innerHTML = rows.map((row) => `
+            <tr onclick="window.location.href='${incidentTarget(row)}'">
+                <td data-ts="${escapeHtml(row.ts_last || '')}">${escapeHtml(row.ts_last || '')}</td>
+                <td>${escapeHtml(row.rule_name || '')}</td>
+                <td><span class="severity ${severityClass(row.severity_agg)}">${escapeHtml(row.severity_agg || 'info')}</span></td>
+                <td>${Number(row.count_alerts || 0)}</td>
+                <td>${escapeHtml((row.sources || []).slice(0, 3).join(', ') || row.source_summary || 'n/a')}</td>
+                <td><span class="status-pill">${escapeHtml(row.status || 'new')}</span></td>
+                <td>${escapeHtml(row.assignee || 'unassigned')}</td>
+            </tr>
+        `).join('') || '<tr><td colspan="7"><div class="empty-box">No incidents in the queue.</div></td></tr>';
+    }
+    applyTimestampFormatting(body);
+}
+
+function updateKpis(metrics, platformStatus) {
+    document.getElementById('kpiOpenIncidents').textContent = String(metrics.open_incidents_24h || 0);
+    document.getElementById('kpiNewAlerts').textContent = String(metrics.new_alerts_24h || 0);
+    document.getElementById('kpiEvents1h').textContent = String(metrics.events_1h || 0);
+    document.getElementById('kpiTiHits').textContent = String(metrics.ti_hits_24h || 0);
+    document.getElementById('kpiAuditEvents').textContent = String(metrics.audit_events_24h || 0);
+    document.getElementById('kpiCriticalAssets').textContent = String(metrics.critical_assets_observed_24h || 0);
+    document.getElementById('kpiActiveSources').textContent = String(metrics.active_sources_24h || 0);
+    document.getElementById('kpiPlatformStatus').textContent = platformStatus && platformStatus.clickhouse_ok ? 'LIVE' : 'DOWN';
+    document.getElementById('kpiPlatformMeta').textContent = platformStatus && platformStatus.last_event_ts
+        ? `Last event: ${formatDisplayTimestamp(platformStatus.last_event_ts)}. Events 5m: ${Number(platformStatus.events_5m || 0)}.`
+        : 'Frontend status polling could not reach ClickHouse.';
+}
+
+function renderDashboard(snapshot) {
+    dashboardSnapshot = snapshot;
+    updateKpis(snapshot.metrics || {}, snapshot.platform_status || {});
+    renderBreakdown('eventsSeverityBar', 'eventsSeverityLegend', (snapshot.severity_breakdown || []).map((row) => ({ label: row.severity, count: row.cnt })));
+    renderBreakdown('alertSeverityBar', 'alertSeverityLegend', (snapshot.alert_severity_breakdown || []).map((row) => ({ label: row.severity, count: row.cnt })));
+    renderBreakdown('alertStatusBar', 'alertStatusLegend', (snapshot.alert_status_breakdown || []).map((row) => ({ label: row.status, count: row.cnt })));
+    renderTimelineChart('dashboardTimeline', 'dashboardTimelineMeta', snapshot.timeline || [], 'No event volume data.', 'Events');
+    renderTimelineChart('dashboardAlertTimeline', 'dashboardAlertTimelineMeta', snapshot.alert_timeline || [], 'No alert volume data.', 'Alerts');
+    renderTopSources(snapshot.top_sources || []);
+    renderTopPorts(snapshot.top_target_ports || []);
+    renderTopCategories(snapshot.top_categories || []);
+    renderIncidentRows('recentIncidentsBody', snapshot.recent_alerts || [], true);
+    renderIncidentRows('incidentQueueBody', snapshot.recent_alerts || [], false);
+}
+
+async function refreshDashboard() {
+    try {
+        const response = await fetch('/api/dashboard/summary', { headers: { 'Accept': 'application/json' } });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Unable to refresh dashboard');
+        renderDashboard(payload);
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+renderDashboard(dashboardSnapshot);
+window.addEventListener('rdegon:timezone-changed', () => renderDashboard(dashboardSnapshot));
+window.addEventListener('rdegon:platform-status', (event) => {
+    if (event && event.detail) {
+        updateKpis(dashboardSnapshot.metrics || {}, event.detail);
+    }
 });
-applyTimestampFormatting(document);
+dashboardRefreshTimer = window.setInterval(refreshDashboard, 15000);
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshDashboard();
+});
 </script>
 {% endblock %}

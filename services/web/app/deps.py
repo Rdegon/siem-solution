@@ -360,9 +360,9 @@ def _freshness_state(last_seen: str) -> str:
     if ts is None:
         return "unknown"
     age_minutes = max(0, int((datetime.utcnow() - ts).total_seconds() // 60))
-    if age_minutes <= 15:
+    if age_minutes <= 20:
         return "active"
-    if age_minutes <= 60:
+    if age_minutes <= 90:
         return "delayed"
     return "stale"
 
@@ -1012,6 +1012,23 @@ def fetch_events_timeseries(hours: int = 24, bucket_minutes: int = 30) -> List[D
     return rows
 
 
+def fetch_alert_timeseries(hours: int = 24, bucket_minutes: int = 60) -> List[Dict[str, Any]]:
+    query = f"""
+        SELECT
+            toStartOfInterval(ts_last, INTERVAL {int(bucket_minutes)} minute) AS bucket,
+            count() AS cnt
+        FROM siem.alerts_raw
+        WHERE ts_last >= now() - INTERVAL {int(hours)} HOUR
+        GROUP BY bucket
+        ORDER BY bucket ASC
+    """
+    rows: List[Dict[str, Any]] = []
+    result = get_ch_client().query(query)
+    for bucket, cnt in result.result_rows:
+        rows.append({'bucket': _fmt(bucket), 'cnt': int(cnt)})
+    return rows
+
+
 def fetch_severity_breakdown(hours: int = 24) -> List[Dict[str, Any]]:
     query = f"""
         SELECT lower(severity) AS severity, count() AS cnt
@@ -1212,7 +1229,7 @@ def fetch_alert_metrics() -> Dict[str, Any]:
 
 
 def fetch_recent_alerts(limit: int = 10) -> List[Dict[str, Any]]:
-    return fetch_alerts_raw(limit=limit)
+    return fetch_alerts_agg(limit=limit)
 
 
 def _cmdb_asset_indexes() -> tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
@@ -1439,6 +1456,42 @@ def fetch_resource_overview() -> Dict[str, Any]:
         'last_event_ts': _fmt(_scalar("SELECT max(ts) FROM siem.events")),
         'hot_retention_hours': int(CONFIG.hot_retention_hours),
         'cold_retention_days': int(CONFIG.cold_retention_days),
+    }
+
+
+def fetch_platform_status() -> Dict[str, Any]:
+    try:
+        clickhouse_ok = ch_ping()
+    except Exception:
+        clickhouse_ok = False
+    if not clickhouse_ok:
+        return {
+            "clickhouse_ok": False,
+            "last_event_ts": "",
+            "events_5m": 0,
+            "alerts_24h": 0,
+        }
+    return {
+        "clickhouse_ok": True,
+        "last_event_ts": _fmt(_scalar("SELECT max(ts) FROM siem.events")),
+        "events_5m": int(_scalar("SELECT count() FROM siem.events WHERE ts >= now() - INTERVAL 5 MINUTE")),
+        "alerts_24h": int(_scalar("SELECT count() FROM siem.alerts_raw WHERE ts >= now() - INTERVAL 24 HOUR")),
+    }
+
+
+def fetch_dashboard_snapshot() -> Dict[str, Any]:
+    return {
+        "metrics": fetch_dashboard_metrics(),
+        "timeline": fetch_events_timeseries(hours=24, bucket_minutes=60),
+        "alert_timeline": fetch_alert_timeseries(hours=24, bucket_minutes=60),
+        "severity_breakdown": fetch_severity_breakdown(hours=24),
+        "alert_severity_breakdown": fetch_alert_severity_breakdown(hours=24),
+        "alert_status_breakdown": fetch_alert_status_breakdown(hours=24),
+        "top_sources": fetch_top_sources(limit=8, hours=24),
+        "top_target_ports": fetch_top_target_ports(limit=10, hours=24),
+        "top_categories": fetch_top_categories(limit=8, hours=24),
+        "recent_alerts": fetch_recent_alerts(limit=10),
+        "platform_status": fetch_platform_status(),
     }
 
 
