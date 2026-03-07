@@ -8,6 +8,7 @@ from .auth import get_current_user
 from ..security import require_permissions
 from ..deps import EVENT_ROW_LIMIT_DEFAULT, execute_event_query
 from ..templates import templates
+from ..ui_text import ui_context
 
 router = APIRouter()
 
@@ -24,16 +25,16 @@ async def events_page(
 ) -> HTMLResponse:
     return templates.TemplateResponse(
         'events.html',
-        {
-            'request': request,
-            'user': user,
-            'active_page': 'events',
-            'initial_query': q,
-            'initial_window': window,
-            'initial_storage': storage,
-            'initial_auto_refresh': auto_refresh,
-            'initial_limit': limit,
-        },
+        ui_context(
+            request,
+            user,
+            'events',
+            initial_query=q,
+            initial_window=window,
+            initial_storage=storage,
+            initial_auto_refresh=auto_refresh,
+            initial_limit=limit,
+        ),
     )
 
 

@@ -16,11 +16,13 @@ from ..deps import (
     fetch_cmdb_assets,
     fetch_dashboard_metrics,
     fetch_detection_rules,
+    fetch_collector_inventory,
     fetch_events_timeseries,
     fetch_normalizer_rules,
     fetch_recent_alerts,
     fetch_resource_overview,
     fetch_severity_breakdown,
+    fetch_source_inventory,
     import_cmdb_assets,
     import_threat_intel_entries,
     sync_observed_assets_to_cmdb,
@@ -36,6 +38,7 @@ from ..deps import (
 )
 from ..security import require_permissions
 from ..templates import templates
+from ..ui_text import investigation_playbooks, ui_context
 
 router = APIRouter()
 
@@ -101,22 +104,22 @@ def _render_assets_page(
         draft.update(rule_form)
     return templates.TemplateResponse(
         'assets.html',
-        {
-            'request': request,
-            'user': user,
-            'active_page': 'assets',
-            'assets': assets,
-            'asset_categories': asset_categories,
-            'detection_rules': detection_rules,
-            'normalizer_rules': normalizer_rules,
-            'active_list_items': active_list_items,
-            'cmdb_assets': cmdb_assets,
-            'threat_intel_entries': threat_intel_entries,
-            'entity_fields': RULE_ENTITY_FIELDS,
-            'rule_form': draft,
-            'error': load_error,
-            'status': status,
-        },
+        ui_context(
+            request,
+            user,
+            'assets',
+            assets=assets,
+            asset_categories=asset_categories,
+            detection_rules=detection_rules,
+            normalizer_rules=normalizer_rules,
+            active_list_items=active_list_items,
+            cmdb_assets=cmdb_assets,
+            threat_intel_entries=threat_intel_entries,
+            entity_fields=RULE_ENTITY_FIELDS,
+            rule_form=draft,
+            error=load_error,
+            status=status,
+        ),
     )
 
 
@@ -127,21 +130,21 @@ async def index(request: Request, user=Depends(get_current_user)):
 
 @router.get('/dashboards', response_class=HTMLResponse)
 async def dashboard_page(request: Request, user=Depends(get_current_user)) -> HTMLResponse:
-    context = {
-        'request': request,
-        'user': user,
-        'active_page': 'dashboards',
-        'metrics': {},
-        'timeline': [],
-        'severity_breakdown': [],
-        'alert_severity_breakdown': [],
-        'alert_status_breakdown': [],
-        'top_sources': [],
-        'top_target_ports': [],
-        'top_categories': [],
-        'recent_alerts': [],
-        'error': None,
-    }
+    context = ui_context(
+        request,
+        user,
+        'dashboards',
+        metrics={},
+        timeline=[],
+        severity_breakdown=[],
+        alert_severity_breakdown=[],
+        alert_status_breakdown=[],
+        top_sources=[],
+        top_target_ports=[],
+        top_categories=[],
+        recent_alerts=[],
+        error=None,
+    )
     try:
         context['metrics'] = fetch_dashboard_metrics()
         context['timeline'] = fetch_events_timeseries(hours=24, bucket_minutes=60)
@@ -369,12 +372,59 @@ async def resources_page(request: Request, user=Depends(get_current_user)) -> HT
         error = f'Unable to load platform resources: {exc!s}'
     return templates.TemplateResponse(
         'resources.html',
-        {
-            'request': request,
-            'user': user,
-            'active_page': 'resources',
-            'overview': overview,
-            'sources': sources,
-            'error': error,
-        },
+        ui_context(
+            request,
+            user,
+            'resources',
+            overview=overview,
+            sources=sources,
+            error=error,
+        ),
     )
+
+
+@router.get('/sources', response_class=HTMLResponse)
+async def sources_page(request: Request, user=Depends(get_current_user)) -> HTMLResponse:
+    error = None
+    sources = []
+    try:
+        sources = fetch_source_inventory(limit=300, hours=24)
+    except Exception as exc:  # noqa: BLE001
+        error = f'Unable to load source inventory: {exc!s}'
+    return templates.TemplateResponse(
+        'sources.html',
+        ui_context(
+            request,
+            user,
+            'sources',
+            sources=sources,
+            error=error,
+        ),
+    )
+
+
+@router.get('/collectors', response_class=HTMLResponse)
+async def collectors_page(request: Request, user=Depends(get_current_user)) -> HTMLResponse:
+    error = None
+    collectors = []
+    try:
+        collectors = fetch_collector_inventory(hours=24)
+    except Exception as exc:  # noqa: BLE001
+        error = f'Unable to load collector inventory: {exc!s}'
+    return templates.TemplateResponse(
+        'collectors.html',
+        ui_context(
+            request,
+            user,
+            'collectors',
+            collectors=collectors,
+            error=error,
+        ),
+    )
+
+
+@router.get('/documentation', response_class=HTMLResponse)
+async def documentation_page(request: Request, user=Depends(get_current_user)) -> HTMLResponse:
+    context = ui_context(request, user, 'documentation')
+    context['playbooks'] = investigation_playbooks(context['ui_lang'])
+    return templates.TemplateResponse('documentation.html', context)

@@ -1,0 +1,245 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+from fastapi import Request
+
+
+SUPPORTED_UI_LANGS = {"en", "ru"}
+
+UI_TEXT: Dict[str, Dict[str, str]] = {
+    "en": {
+        "brand.title": "Rdegon SIEM",
+        "brand.subtitle": "Enterprise-style investigation console for telemetry, detections, incidents, and platform operations.",
+        "nav.monitor": "Monitor",
+        "nav.content": "Content & Admin",
+        "nav.dashboards": "Dashboards",
+        "nav.dashboards.meta": "Overview",
+        "nav.incidents": "Incidents",
+        "nav.incidents.meta": "Queue",
+        "nav.events": "Events",
+        "nav.events.meta": "Search",
+        "nav.sources": "Sources",
+        "nav.sources.meta": "Telemetry",
+        "nav.collectors": "Collectors",
+        "nav.collectors.meta": "Pipeline",
+        "nav.assets": "Assets",
+        "nav.assets.meta": "Content",
+        "nav.documentation": "Documentation",
+        "nav.documentation.meta": "Playbooks",
+        "nav.resources": "Resources",
+        "nav.resources.meta": "Infra",
+        "shell.menu": "Menu",
+        "shell.hide": "Hide",
+        "shell.show": "Show",
+        "shell.live": "ClickHouse live",
+        "shell.sign_out": "Sign out",
+        "shell.theme.dark": "Dark",
+        "shell.theme.light": "Light",
+        "shell.theme.icon.dark": "DK",
+        "shell.theme.icon.light": "LT",
+        "shell.timezone": "Time zone",
+        "shell.timezone.prompt": "Enter IANA time zone. Leave empty to use browser local time.",
+        "shell.timezone.invalid": "Unsupported time zone. Use an IANA name like Europe/Moscow or America/New_York.",
+        "shell.language": "Language",
+        "shell.session": "Session",
+        "shell.instance": "Instance",
+        "shell.environment": "Environment",
+        "shell.user": "User",
+        "shell.role": "Role",
+        "shell.base_url": "Base URL",
+        "page.dashboards.title": "Security Dashboard",
+        "page.dashboards.subtitle": "Operational picture of events, incidents, monitored sources, and target services across the Rdegon SIEM deployment.",
+        "page.events.title": "Event Console",
+        "page.events.subtitle": "Run ClickHouse-style searches against events_view, pivot on sources and identities, and open detailed event context only when you need it.",
+        "page.alerts.title": "Incidents and Alerts",
+        "page.alerts.subtitle": "Investigate aggregated incidents and the raw alert queue with the same side-drawer workflow used in Event Console.",
+        "page.assets.title": "Assets and Detection Content",
+        "page.assets.subtitle": "Manage observed devices, CMDB context, threat intel indicators, Sigma detections, Windows collection foundations, and monitoring content.",
+        "page.resources.title": "Platform Resources",
+        "page.resources.subtitle": "Storage health, rule inventory, retention helpers, and query reference for the active SIEM deployment.",
+        "page.sources.title": "Source Inventory",
+        "page.sources.subtitle": "Unified view of monitored sources, source types, collector paths, CMDB ownership, and telemetry freshness.",
+        "page.collectors.title": "Collectors and Pipelines",
+        "page.collectors.subtitle": "Track ingest roles, normalization stages, source coverage, and readiness of collector paths for each telemetry class.",
+        "page.documentation.title": "Documentation and Investigations",
+        "page.documentation.subtitle": "Built-in investigation guides, analyst notes, and ready-to-run query examples for common SOC workflows.",
+        "doc.quickstart": "Quick start",
+        "doc.playbooks": "Investigation playbooks",
+        "doc.examples": "Query examples",
+    },
+    "ru": {
+        "brand.title": "Rdegon SIEM",
+        "brand.subtitle": "Интерфейс уровня enterprise для телеметрии, детектов, инцидентов и эксплуатации платформы.",
+        "nav.monitor": "Мониторинг",
+        "nav.content": "Контент и управление",
+        "nav.dashboards": "Панель",
+        "nav.dashboards.meta": "Обзор",
+        "nav.incidents": "Инциденты",
+        "nav.incidents.meta": "Очередь",
+        "nav.events": "События",
+        "nav.events.meta": "Поиск",
+        "nav.sources": "Источники",
+        "nav.sources.meta": "Телеметрия",
+        "nav.collectors": "Коллекторы",
+        "nav.collectors.meta": "Пайплайн",
+        "nav.assets": "Активы",
+        "nav.assets.meta": "Контент",
+        "nav.documentation": "Документация",
+        "nav.documentation.meta": "Плейбуки",
+        "nav.resources": "Ресурсы",
+        "nav.resources.meta": "Инфра",
+        "shell.menu": "Меню",
+        "shell.hide": "Скрыть",
+        "shell.show": "Показать",
+        "shell.live": "ClickHouse online",
+        "shell.sign_out": "Выйти",
+        "shell.theme.dark": "Темная",
+        "shell.theme.light": "Светлая",
+        "shell.theme.icon.dark": "ТМ",
+        "shell.theme.icon.light": "СВ",
+        "shell.timezone": "Часовой пояс",
+        "shell.timezone.prompt": "Введите IANA-таймзону. Оставьте пустым, чтобы использовать локальный часовой пояс браузера.",
+        "shell.timezone.invalid": "Неподдерживаемая таймзона. Используйте IANA-имя, например Europe/Moscow или America/New_York.",
+        "shell.language": "Язык",
+        "shell.session": "Сессия",
+        "shell.instance": "Инстанс",
+        "shell.environment": "Окружение",
+        "shell.user": "Пользователь",
+        "shell.role": "Роль",
+        "shell.base_url": "Базовый URL",
+        "page.dashboards.title": "Панель безопасности",
+        "page.dashboards.subtitle": "Операционная картина по событиям, инцидентам, источникам и целевым сервисам в развернутой системе Rdegon SIEM.",
+        "page.events.title": "Консоль событий",
+        "page.events.subtitle": "Выполняйте запросы в стиле ClickHouse по events_view, переходите по источникам и учетным записям и открывайте детали события только когда это нужно.",
+        "page.alerts.title": "Инциденты и алерты",
+        "page.alerts.subtitle": "Расследуйте агрегированные инциденты и очередь сырых алертов в том же drawer-потоке, что и в консоли событий.",
+        "page.assets.title": "Активы и контент детектирования",
+        "page.assets.subtitle": "Управляйте устройствами, CMDB-контекстом, индикаторами TI, Sigma-детектами, Windows-коллекторами и контентом мониторинга.",
+        "page.resources.title": "Ресурсы платформы",
+        "page.resources.subtitle": "Состояние хранилища, инвентарь правил, ретеншн и справка по запросам для активного развертывания SIEM.",
+        "page.sources.title": "Инвентарь источников",
+        "page.sources.subtitle": "Единое представление по источникам, типам телеметрии, collector path, владельцам из CMDB и актуальности данных.",
+        "page.collectors.title": "Коллекторы и пайплайны",
+        "page.collectors.subtitle": "Контроль ролей ingest, этапов нормализации, покрытия по источникам и готовности collector-путей для каждого класса телеметрии.",
+        "page.documentation.title": "Документация и расследования",
+        "page.documentation.subtitle": "Встроенные гайды расследований, заметки аналитика и готовые запросы для типовых SOC-сценариев.",
+        "doc.quickstart": "Быстрый старт",
+        "doc.playbooks": "Плейбуки расследований",
+        "doc.examples": "Примеры запросов",
+    },
+}
+
+
+def resolve_ui_lang(request: Request) -> str:
+    lang = str(request.cookies.get("ui_lang", "en") or "en").strip().lower()
+    return lang if lang in SUPPORTED_UI_LANGS else "en"
+
+
+def ui_context(request: Request, user: Any, active_page: str, **extra: Any) -> Dict[str, Any]:
+    lang = resolve_ui_lang(request)
+    context: Dict[str, Any] = {
+        "request": request,
+        "user": user,
+        "active_page": active_page,
+        "ui_lang": lang,
+        "t": UI_TEXT[lang],
+    }
+    context.update(extra)
+    return context
+
+
+def investigation_playbooks(lang: str) -> List[Dict[str, Any]]:
+    playbooks = {
+        "en": [
+            {
+                "title": "SSH brute force against Linux hosts",
+                "summary": "Validate repeated authentication failures, identify targeted account, and confirm whether a success event followed.",
+                "sources": ["Linux auditd", "Linux sshd", "Firewall logs"],
+                "steps": [
+                    "Filter Event Console by source and SSH-related subcategories.",
+                    "Pivot on source.ip and target_user to separate password spray from single-account brute force.",
+                    "Check whether a success event or sudo escalation followed the failure burst.",
+                ],
+                "queries": [
+                    "subcategory IN ('ssh_login_failure','ssh_invalid_user','audit_user_login_failure')",
+                    "SELECT ts, log_source, src_ip, target_user, severity, message FROM events_view WHERE dst_port = 22 ORDER BY ts DESC LIMIT 100",
+                    "log_source = 'siem-processing' AND subcategory = 'linux_root_ssh_login'",
+                ],
+            },
+            {
+                "title": "Threat intel hit on critical asset",
+                "summary": "Confirm whether IOC-matched activity touched a CMDB asset tagged as high or critical and scope related processes or users.",
+                "sources": ["Threat intel enrichment", "CMDB", "Linux / Windows telemetry"],
+                "steps": [
+                    "Review incident cluster assets, IOC list, and related identities.",
+                    "Pivot from the IOC into all related events over the same time window.",
+                    "Check whether the matched process, user, or destination repeats on additional assets.",
+                ],
+                "queries": [
+                    "ti_indicator != '' AND asset_criticality IN ('high','critical')",
+                    "SELECT ts, asset_id, log_source, ti_indicator, process_command, user_name FROM events_view WHERE ti_indicator != '' ORDER BY ts DESC LIMIT 100",
+                ],
+            },
+            {
+                "title": "VPN edge probing and port targeting",
+                "summary": "Determine whether observed traffic is noisy internet background scanning or focused credential activity against exposed services.",
+                "sources": ["VPN gateway logs", "Firewall blocks", "sshd/authentication telemetry"],
+                "steps": [
+                    "Open Targeted ports on the dashboard and identify dominant service ports.",
+                    "Check whether the same source IP appears across multiple destination ports.",
+                    "Correlate firewall blocks with authentication failures and eventual success events.",
+                ],
+                "queries": [
+                    "subcategory = 'linux_firewall_blocked'",
+                    "SELECT ts, log_source, src_ip, dst_port, category, subcategory, message FROM events_view WHERE dst_port IN (22,443,51820,8443) ORDER BY ts DESC LIMIT 150",
+                ],
+            },
+        ],
+        "ru": [
+            {
+                "title": "SSH brute force против Linux-хостов",
+                "summary": "Проверьте повторяющиеся ошибки аутентификации, определите целевую учетную запись и подтвердите, был ли затем успешный вход.",
+                "sources": ["Linux auditd", "Linux sshd", "Логи firewall"],
+                "steps": [
+                    "Отфильтруйте в Event Console SSH-подкатегории и нужный источник.",
+                    "Переходите по source.ip и target_user, чтобы отделить spray по многим логинам от brute force по одной учетной записи.",
+                    "Проверьте, не последовали ли после серии неудач успешный вход или sudo-эскалация.",
+                ],
+                "queries": [
+                    "subcategory IN ('ssh_login_failure','ssh_invalid_user','audit_user_login_failure')",
+                    "SELECT ts, log_source, src_ip, target_user, severity, message FROM events_view WHERE dst_port = 22 ORDER BY ts DESC LIMIT 100",
+                    "log_source = 'siem-processing' AND subcategory = 'linux_root_ssh_login'",
+                ],
+            },
+            {
+                "title": "Попадание TI-индикатора по критичному активу",
+                "summary": "Подтвердите, что активность по IOC затронула актив из CMDB с критичностью high/critical, и определите связанные процессы и учетные записи.",
+                "sources": ["Threat intel enrichment", "CMDB", "Linux / Windows telemetry"],
+                "steps": [
+                    "Откройте incident cluster и посмотрите активы, IOC и связанные идентичности.",
+                    "Сделайте pivot по IOC на все связанные события в том же окне времени.",
+                    "Проверьте, повторяется ли тот же процесс, пользователь или destination на других активах.",
+                ],
+                "queries": [
+                    "ti_indicator != '' AND asset_criticality IN ('high','critical')",
+                    "SELECT ts, asset_id, log_source, ti_indicator, process_command, user_name FROM events_view WHERE ti_indicator != '' ORDER BY ts DESC LIMIT 100",
+                ],
+            },
+            {
+                "title": "Сканирование VPN-периметра и целевые порты",
+                "summary": "Определите, является ли наблюдаемый трафик обычным интернет-шумом или целевой активностью по подбору учетных данных против открытых сервисов.",
+                "sources": ["Логи VPN-шлюза", "Блокировки firewall", "sshd/auth telemetry"],
+                "steps": [
+                    "Откройте Targeted ports на dashboard и посмотрите доминирующие сервисные порты.",
+                    "Проверьте, появляется ли один и тот же source IP по нескольким destination port.",
+                    "Скоррелируйте firewall blocks с auth failures и возможными success events.",
+                ],
+                "queries": [
+                    "subcategory = 'linux_firewall_blocked'",
+                    "SELECT ts, log_source, src_ip, dst_port, category, subcategory, message FROM events_view WHERE dst_port IN (22,443,51820,8443) ORDER BY ts DESC LIMIT 150",
+                ],
+            },
+        ],
+    }
+    return playbooks["ru" if lang == "ru" else "en"]

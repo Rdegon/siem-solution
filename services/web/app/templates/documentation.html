@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{{ t['page.documentation.title'] }} | Rdegon SIEM{% endblock %}
+{% block page_title %}{{ t['page.documentation.title'] }}{% endblock %}
+{% block page_subtitle %}{{ t['page.documentation.subtitle'] }}{% endblock %}
+{% block extra_head %}
+<style>
+    .doc-layout {
+        display: grid;
+        grid-template-columns: minmax(320px, .9fr) minmax(0, 1.6fr);
+        gap: 18px;
+        align-items: start;
+    }
+    .playbook-list {
+        display: grid;
+        gap: 16px;
+    }
+    .playbook-card {
+        padding: 20px;
+        border-radius: 22px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, var(--surface-solid), var(--surface-alt));
+        display: grid;
+        gap: 14px;
+    }
+    .doc-sidebar {
+        position: sticky;
+        top: 104px;
+    }
+    .step-list {
+        display: grid;
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+    }
+    .step-list li {
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: var(--surface-alt);
+        border: 1px solid var(--border);
+        line-height: 1.6;
+    }
+    .query-block {
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: #071120;
+        border: 1px solid rgba(94, 234, 212, .14);
+        color: #dcecff;
+        overflow: auto;
+        font: 500 12px/1.6 var(--font-mono);
+        white-space: pre-wrap;
+    }
+    @media (max-width: 1280px) {
+        .doc-layout { grid-template-columns: 1fr; }
+        .doc-sidebar { position: static; }
+    }
+</style>
+{% endblock %}
+{% block content %}
+<div class="view-stack">
+    <div class="doc-layout">
+        <aside class="panel doc-sidebar">
+            <div class="panel-header">
+                <div>
+                    <h3 class="panel-title">{{ t['doc.quickstart'] }}</h3>
+                    <p class="panel-subtitle">Use these sections as the analyst-facing internal knowledge base of the product.</p>
+                </div>
+            </div>
+            <div class="panel-body">
+                <div class="kv-list">
+                    <div class="kv"><div class="kv-key">1</div><div class="kv-value">Start from <strong>Dashboards</strong> for global posture and from <strong>Incidents</strong> for active triage.</div></div>
+                    <div class="kv"><div class="kv-key">2</div><div class="kv-value">Use <strong>Events</strong> for pivot search, raw validation, and timeline reconstruction.</div></div>
+                    <div class="kv"><div class="kv-key">3</div><div class="kv-value">Use <strong>Sources</strong> and <strong>Collectors</strong> to validate telemetry health before trusting absence of evidence.</div></div>
+                    <div class="kv"><div class="kv-key">4</div><div class="kv-value">Use <strong>Assets</strong> to maintain CMDB, TI, active lists, detections, and future normalizer content.</div></div>
+                </div>
+            </div>
+        </aside>
+        <section class="playbook-list">
+            {% for playbook in playbooks %}
+            <article class="playbook-card">
+                <div>
+                    <div class="hint">{{ t['doc.playbooks'] }}</div>
+                    <h3 class="panel-title" style="margin-top:4px;">{{ playbook.title }}</h3>
+                    <p class="panel-subtitle">{{ playbook.summary }}</p>
+                </div>
+                <div>
+                    <div class="hint">Sources</div>
+                    <div class="chip-row">
+                        {% for source in playbook.sources %}
+                        <span class="chip">{{ source }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div>
+                    <div class="hint">Steps</div>
+                    <ol class="step-list">
+                        {% for step in playbook.steps %}
+                        <li>{{ step }}</li>
+                        {% endfor %}
+                    </ol>
+                </div>
+                <div>
+                    <div class="hint">{{ t['doc.examples'] }}</div>
+                    <div class="playbook-list">
+                        {% for query in playbook.queries %}
+                        <div class="query-block">{{ query }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </article>
+            {% endfor %}
+        </section>
+    </div>
+</div>
+{% endblock %}

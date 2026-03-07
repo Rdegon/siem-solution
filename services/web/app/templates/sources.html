@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}{{ t['page.sources.title'] }} | Rdegon SIEM{% endblock %}
+{% block page_title %}{{ t['page.sources.title'] }}{% endblock %}
+{% block page_subtitle %}{{ t['page.sources.subtitle'] }}{% endblock %}
+{% block extra_head %}
+<style>
+    .sources-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(340px, .95fr);
+        gap: 18px;
+        align-items: start;
+    }
+    .source-row.active td { background: var(--surface-alt); }
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        padding: 7px 11px;
+        border: 1px solid var(--border);
+        background: var(--surface-alt);
+        font: 600 11px var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: .08em;
+    }
+    .status-badge.active { color: var(--success); border-color: rgba(18, 148, 106, .24); background: var(--success-soft); }
+    .status-badge.delayed { color: var(--warning); border-color: rgba(207, 140, 25, .24); background: var(--warning-soft); }
+    .status-badge.stale { color: var(--danger); border-color: rgba(216, 62, 93, .24); background: var(--danger-soft); }
+    .status-badge.ready, .status-badge.unknown { color: var(--info); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="view-stack">
+    <div class="grid-4">
+        <section class="kpi"><p class="kpi-label">Total sources</p><div class="kpi-value" id="sourcesTotalKpi">{{ sources|length }}</div><div class="kpi-meta">Visible monitored sources for the selected telemetry window.</div></section>
+        <section class="kpi"><p class="kpi-label">Active sources</p><div class="kpi-value" id="sourcesActiveKpi">0</div><div class="kpi-meta">Sources that reported during the freshness threshold.</div></section>
+        <section class="kpi"><p class="kpi-label">With TI hits</p><div class="kpi-value" id="sourcesTiKpi">0</div><div class="kpi-meta">Sources where enriched events matched threat intel indicators.</div></section>
+        <section class="kpi"><p class="kpi-label">Mapped to CMDB</p><div class="kpi-value" id="sourcesCmdbKpi">0</div><div class="kpi-meta">Sources already linked to asset ownership and criticality context.</div></section>
+    </div>
+    <div class="sources-layout">
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h3 class="panel-title">Telemetry sources</h3>
+                    <p class="panel-subtitle">Separate reporting endpoints by telemetry class, collector path, last seen, and CMDB ownership.</p>
+                </div>
+            </div>
+            <div class="panel-body table-wrap">
+                <table id="sourcesTable">
+                    <thead>
+                        <tr>
+                            <th>Source</th>
+                            <th>Type</th>
+                            <th>Collector</th>
+                            <th>Events</th>
+                            <th>Last seen</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in sources %}
+                        <tr class="source-row" data-source-index="{{ loop.index0 }}">
+                            <td class="mono">{{ row.source_name }}</td>
+                            <td>{{ row.source_type }}</td>
+                            <td>{{ row.collector_name }}</td>
+                            <td>{{ row.events }}</td>
+                            <td data-ts="{{ row.last_seen }}">{{ row.last_seen }}</td>
+                            <td><span class="status-badge {{ row.status }}">{{ row.status }}</span></td>
+                        </tr>
+                        {% endfor %}
+                        {% if not sources %}
+                        <tr><td colspan="6"><div class="empty-box">No monitored sources are available yet.</div></td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        <aside class="panel drawer-card">
+            <div class="panel-header">
+                <div>
+                    <h3 class="panel-title">Source details</h3>
+                    <p class="panel-subtitle">Source type, telemetry quality, asset mapping, and quick investigation pivots.</p>
+                </div>
+            </div>
+            <div class="panel-body" id="sourceDetailPanel">
+                <div class="drawer-empty">Select a source row to inspect telemetry scope, CMDB ownership, and suggested pivots into Event Console.</div>
+            </div>
+        </aside>
+    </div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+const sourceRows = {{ sources | tojson }};
+const sourceDetailPanel = document.getElementById('sourceDetailPanel');
+const sourceNodes = Array.from(document.querySelectorAll('.source-row'));
+document.getElementById('sourcesActiveKpi').textContent = String(sourceRows.filter((item) => item.status === 'active').length);
+document.getElementById('sourcesTiKpi').textContent = String(sourceRows.filter((item) => Number(item.ti_hits || 0) > 0).length);
+document.getElementById('sourcesCmdbKpi').textContent = String(sourceRows.filter((item) => item.cmdb_asset_id).length);
+function sourceChip(text) {
+    return `<span class="chip">${escapeHtml(text)}</span>`;
+}
+function renderSourceDetail(index) {
+    const row = sourceRows[index];
+    if (!row || !sourceDetailPanel) return;
+    sourceNodes.forEach((node) => node.classList.toggle('active', Number(node.dataset.sourceIndex) === index));
+    const eventQuery = encodeURIComponent(`log_source = '${row.source_name.replace(/'/g, "\\'")}'`);
+    sourceDetailPanel.innerHTML = `
+        <div class="chip-row" style="margin-bottom:14px;">
+            <span class="status-badge ${escapeHtml(row.status)}">${escapeHtml(row.status)}</span>
+            ${sourceChip(row.source_type)}
+            ${sourceChip(row.collector_name)}
+        </div>
+        <div class="kv-list">
+            <div class="kv"><div class="kv-key">Source</div><div class="kv-value mono">${escapeHtml(row.source_name)}</div></div>
+            <div class="kv"><div class="kv-key">Collector path</div><div class="kv-value">${escapeHtml(row.collector_name)}</div></div>
+            <div class="kv"><div class="kv-key">Events / notable</div><div class="kv-value">${escapeHtml(String(row.events))} / ${escapeHtml(String(row.notable_events || 0))}</div></div>
+            <div class="kv"><div class="kv-key">Auth / audit / TI</div><div class="kv-value">${escapeHtml(String(row.auth_events || 0))} / ${escapeHtml(String(row.audit_events || 0))} / ${escapeHtml(String(row.ti_hits || 0))}</div></div>
+            <div class="kv"><div class="kv-key">Last seen</div><div class="kv-value" data-ts="${escapeHtml(row.last_seen || '')}">${escapeHtml(row.last_seen || '')}</div></div>
+            <div class="kv"><div class="kv-key">CMDB asset</div><div class="kv-value">${escapeHtml(row.cmdb_asset_id || 'n/a')}</div></div>
+            <div class="kv"><div class="kv-key">Owner / service</div><div class="kv-value">${escapeHtml(row.cmdb_owner || 'n/a')} / ${escapeHtml(row.cmdb_service || 'n/a')}</div></div>
+            <div class="kv"><div class="kv-key">Criticality / env</div><div class="kv-value">${escapeHtml(row.cmdb_criticality || 'n/a')} / ${escapeHtml(row.cmdb_environment || 'n/a')}</div></div>
+            <div class="kv"><div class="kv-key">Products</div><div class="kv-value">${(row.products || []).map(sourceChip).join(' ') || '<span class="page-note">No product labels</span>'}</div></div>
+            <div class="kv"><div class="kv-key">Categories</div><div class="kv-value">${(row.categories || []).map(sourceChip).join(' ') || '<span class="page-note">No categories</span>'}</div></div>
+        </div>
+        <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
+            <a class="btn primary" href="/events?q=${eventQuery}">Open in Event Console</a>
+            <a class="btn ghost" href="/events?q=${encodeURIComponent(`log_source = '${row.source_name.replace(/'/g, "\\'")}' AND ti_indicator != ''`)}">Only TI hits</a>
+        </div>
+    `;
+    applyTimestampFormatting(sourceDetailPanel);
+}
+sourceNodes.forEach((node) => {
+    node.addEventListener('click', () => renderSourceDetail(Number(node.dataset.sourceIndex)));
+});
+if (sourceRows.length) renderSourceDetail(0);
+applyTimestampFormatting(document);
+</script>
+{% endblock %}

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Events | Rdegon SIEM{% endblock %}
-{% block page_title %}Event Console{% endblock %}
-{% block page_subtitle %}Run ClickHouse-style searches against <span class="mono">events_view</span>, pivot on sources and identities, and open detailed event context only when you need it.{% endblock %}
+{% block title %}{{ t['page.events.title'] }} | Rdegon SIEM{% endblock %}
+{% block page_title %}{{ t['page.events.title'] }}{% endblock %}
+{% block page_subtitle %}{{ t['page.events.subtitle'] }}{% endblock %}
 {% block extra_head %}
 <style>
     .results-toolbar {

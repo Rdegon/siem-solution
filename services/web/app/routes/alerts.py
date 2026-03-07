@@ -15,6 +15,7 @@ from ..deps import (
     update_alert_assignment,
 )
 from ..templates import templates
+from ..ui_text import ui_context
 
 router = APIRouter()
 
@@ -37,17 +38,17 @@ async def alerts_page(
         error = f'Unable to load incidents and alert queue: {exc!s}'
     return templates.TemplateResponse(
         'alerts.html',
-        {
-            'request': request,
-            'user': user,
-            'active_page': 'alerts',
-            'alerts_agg': alerts_agg,
-            'alerts_raw': alerts_raw,
-            'metrics': metrics,
-            'view': 'raw' if view == 'raw' else 'agg',
-            'status_transitions': {key: sorted(values) for key, values in INCIDENT_STATUS_TRANSITIONS.items()},
-            'error': error,
-        },
+        ui_context(
+            request,
+            user,
+            'alerts',
+            alerts_agg=alerts_agg,
+            alerts_raw=alerts_raw,
+            metrics=metrics,
+            view='raw' if view == 'raw' else 'agg',
+            status_transitions={key: sorted(values) for key, values in INCIDENT_STATUS_TRANSITIONS.items()},
+            error=error,
+        ),
     )
 
 

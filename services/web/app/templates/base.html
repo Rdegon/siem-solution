@@ -1,6 +1,6 @@
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ ui_lang or 'en' }}">
 <head>
     <meta charset="UTF-8">
     <title>{% block title %}Rdegon SIEM{% endblock %}</title>
@@ -413,31 +413,39 @@
             <div class="sidebar-brand">
                 <div class="brand-top">
                     <div class="brand-mark">R</div>
-                    <button class="brand-toggle" id="sidebarToggle" type="button" aria-label="Toggle sidebar"><span class="btn-label" id="sidebarToggleLabel">Hide</span></button>
+                    <button class="brand-toggle" id="sidebarToggle" type="button" aria-label="Toggle sidebar"><span class="btn-label" id="sidebarToggleLabel">{{ t['shell.hide'] }}</span></button>
                 </div>
                 <div>
-                    <h1>Rdegon SIEM</h1>
-                    <p>Investigation console for the four-node lab deployment. Search events, inspect incidents, and switch between light and dark themes.</p>
+                    <h1>{{ t['brand.title'] }}</h1>
+                    <p>{{ t['brand.subtitle'] }}</p>
                 </div>
             </div>
             <section class="nav-section">
-                <div class="nav-header">Navigation</div>
+                <div class="nav-header">{{ t['nav.monitor'] }}</div>
                 <nav class="nav-list">
-                    <a class="nav-link {% if active_page == 'dashboards' %}active{% endif %}" href="/dashboards"><span class="nav-icon">DB</span><span class="nav-label">Dashboards</span><span class="nav-suffix">Overview</span></a>
-                    <a class="nav-link {% if active_page == 'alerts' %}active{% endif %}" href="/alerts"><span class="nav-icon">IR</span><span class="nav-label">Incidents</span><span class="nav-suffix">Queue</span></a>
-                    <a class="nav-link {% if active_page == 'events' %}active{% endif %}" href="/events"><span class="nav-icon">EV</span><span class="nav-label">Events</span><span class="nav-suffix">SQL</span></a>
-                    <a class="nav-link {% if active_page == 'assets' %}active{% endif %}" href="/assets"><span class="nav-icon">AS</span><span class="nav-label">Assets</span><span class="nav-suffix">Sources</span></a>
-                    <a class="nav-link {% if active_page == 'resources' %}active{% endif %}" href="/resources"><span class="nav-icon">RS</span><span class="nav-label">Resources</span><span class="nav-suffix">Infra</span></a>
+                    <a class="nav-link {% if active_page == 'dashboards' %}active{% endif %}" href="/dashboards"><span class="nav-icon">DB</span><span class="nav-label">{{ t['nav.dashboards'] }}</span><span class="nav-suffix">{{ t['nav.dashboards.meta'] }}</span></a>
+                    <a class="nav-link {% if active_page == 'alerts' %}active{% endif %}" href="/alerts"><span class="nav-icon">IR</span><span class="nav-label">{{ t['nav.incidents'] }}</span><span class="nav-suffix">{{ t['nav.incidents.meta'] }}</span></a>
+                    <a class="nav-link {% if active_page == 'events' %}active{% endif %}" href="/events"><span class="nav-icon">EV</span><span class="nav-label">{{ t['nav.events'] }}</span><span class="nav-suffix">{{ t['nav.events.meta'] }}</span></a>
+                    <a class="nav-link {% if active_page == 'sources' %}active{% endif %}" href="/sources"><span class="nav-icon">SO</span><span class="nav-label">{{ t['nav.sources'] }}</span><span class="nav-suffix">{{ t['nav.sources.meta'] }}</span></a>
+                    <a class="nav-link {% if active_page == 'collectors' %}active{% endif %}" href="/collectors"><span class="nav-icon">CL</span><span class="nav-label">{{ t['nav.collectors'] }}</span><span class="nav-suffix">{{ t['nav.collectors.meta'] }}</span></a>
+                </nav>
+            </section>
+            <section class="nav-section">
+                <div class="nav-header">{{ t['nav.content'] }}</div>
+                <nav class="nav-list">
+                    <a class="nav-link {% if active_page == 'assets' %}active{% endif %}" href="/assets"><span class="nav-icon">AS</span><span class="nav-label">{{ t['nav.assets'] }}</span><span class="nav-suffix">{{ t['nav.assets.meta'] }}</span></a>
+                    <a class="nav-link {% if active_page == 'documentation' %}active{% endif %}" href="/documentation"><span class="nav-icon">DC</span><span class="nav-label">{{ t['nav.documentation'] }}</span><span class="nav-suffix">{{ t['nav.documentation.meta'] }}</span></a>
+                    <a class="nav-link {% if active_page == 'resources' %}active{% endif %}" href="/resources"><span class="nav-icon">RS</span><span class="nav-label">{{ t['nav.resources'] }}</span><span class="nav-suffix">{{ t['nav.resources.meta'] }}</span></a>
                 </nav>
             </section>
             <div class="sidebar-footer">
                 <div class="sidebar-context">
-                    <div class="meta-title">Session</div>
-                    <div class="context-row"><span>Instance</span><strong>{{ request.app.state.instance_name }}</strong></div>
-                    <div class="context-row"><span>Environment</span><strong>{{ request.app.state.env }}</strong></div>
-                    <div class="context-row"><span>User</span><strong>{{ user.username if user is defined else 'guest' }}</strong></div>
-                    <div class="context-row"><span>Role</span><strong>{{ user.role if user is defined else 'guest' }}</strong></div>
-                    <div class="context-row"><span>Base URL</span><strong>{{ request.app.state.base_url }}</strong></div>
+                    <div class="meta-title">{{ t['shell.session'] }}</div>
+                    <div class="context-row"><span>{{ t['shell.instance'] }}</span><strong>{{ request.app.state.instance_name }}</strong></div>
+                    <div class="context-row"><span>{{ t['shell.environment'] }}</span><strong>{{ request.app.state.env }}</strong></div>
+                    <div class="context-row"><span>{{ t['shell.user'] }}</span><strong>{{ user.username if user is defined else 'guest' }}</strong></div>
+                    <div class="context-row"><span>{{ t['shell.role'] }}</span><strong>{{ user.role if user is defined else 'guest' }}</strong></div>
+                    <div class="context-row"><span>{{ t['shell.base_url'] }}</span><strong>{{ request.app.state.base_url }}</strong></div>
                 </div>
             </div>
         </aside>
@@ -445,18 +453,19 @@
             <div class="main-inner">
                 <div class="topbar">
                     <div class="topbar-left">
-                        <button class="topbar-icon" id="sidebarMobileToggle" type="button" aria-label="Open sidebar"><span class="btn-label">Menu</span></button>
+                        <button class="topbar-icon" id="sidebarMobileToggle" type="button" aria-label="Open sidebar"><span class="btn-label">{{ t['shell.menu'] }}</span></button>
                         <div class="page-heading">
                             <h2>{% block page_title %}Rdegon SIEM{% endblock %}</h2>
                             <p>{% block page_subtitle %}Operational monitoring and investigation console{% endblock %}</p>
                         </div>
                     </div>
                     <div class="topbar-actions">
-                        <span class="badge sql">ClickHouse live</span>
+                        <span class="badge sql">{{ t['shell.live'] }}</span>
                         <button class="timezone-toggle" id="timezoneToggle" type="button" aria-label="Set time zone"><span class="btn-label">TZ</span><span id="timezoneToggleLabel">Local</span></button>
-                        <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme"><span class="btn-label" id="themeToggleIcon">DK</span><span id="themeToggleLabel">Dark</span></button>
+                        <button class="topbar-icon" id="languageToggle" type="button" aria-label="Toggle language"><span class="btn-label">{{ t['shell.language'] }}</span><span id="languageToggleLabel">{{ ui_lang|upper }}</span></button>
+                        <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme"><span class="btn-label" id="themeToggleIcon">{{ t['shell.theme.icon.dark'] }}</span><span id="themeToggleLabel">{{ t['shell.theme.dark'] }}</span></button>
                         <span class="status-pill">{{ user.username if user is defined else 'guest' }} / {{ user.role if user is defined else 'guest' }}</span>
-                        <a class="btn ghost" href="/auth/logout">Sign out</a>
+                        <a class="btn ghost" href="/auth/logout">{{ t['shell.sign_out'] }}</a>
                     </div>
                 </div>
                 {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
@@ -547,6 +556,7 @@
             });
             container.style.background = `conic-gradient(${segments.join(', ')})`;
         }
+        const UI_I18N = {{ t | tojson }};
         (function initShell() {
             const body = document.body;
             const themeToggle = document.getElementById('themeToggle');
@@ -554,6 +564,8 @@
             const themeToggleLabel = document.getElementById('themeToggleLabel');
             const timezoneToggle = document.getElementById('timezoneToggle');
             const timezoneToggleLabel = document.getElementById('timezoneToggleLabel');
+            const languageToggle = document.getElementById('languageToggle');
+            const languageToggleLabel = document.getElementById('languageToggleLabel');
             const sidebarToggle = document.getElementById('sidebarToggle');
             const sidebarToggleLabel = document.getElementById('sidebarToggleLabel');
             const sidebarMobileToggle = document.getElementById('sidebarMobileToggle');
@@ -565,17 +577,22 @@
             body.dataset.sidebar = storedSidebar;
             function syncThemeLabel() {
                 const dark = body.dataset.theme === 'dark';
-                themeToggleIcon.textContent = dark ? 'LT' : 'DK';
-                themeToggleLabel.textContent = dark ? 'Light' : 'Dark';
+                themeToggleIcon.textContent = dark ? UI_I18N['shell.theme.icon.light'] : UI_I18N['shell.theme.icon.dark'];
+                themeToggleLabel.textContent = dark ? UI_I18N['shell.theme.light'] : UI_I18N['shell.theme.dark'];
             }
             function syncSidebarLabel() {
                 const collapsed = body.dataset.sidebar === 'collapsed';
-                if (sidebarToggleLabel) sidebarToggleLabel.textContent = collapsed ? 'Show' : 'Hide';
+                if (sidebarToggleLabel) sidebarToggleLabel.textContent = collapsed ? UI_I18N['shell.show'] : UI_I18N['shell.hide'];
             }
             function syncTimeZoneLabel() {
                 const timezone = resolveUserTimeZone();
                 timezoneToggleLabel.textContent = timezone.length > 24 ? timezone.slice(0, 21) + '...' : timezone;
-                timezoneToggle.title = `Time zone: ${timezone}`;
+                timezoneToggle.title = `${UI_I18N['shell.timezone']}: ${timezone}`;
+            }
+            function syncLanguageLabel() {
+                const current = document.documentElement.lang || '{{ ui_lang or "en" }}';
+                languageToggleLabel.textContent = current.toUpperCase();
+                languageToggle.title = `${UI_I18N['shell.language']}: ${current.toUpperCase()}`;
             }
             function closeMobileSidebar() { body.dataset.sidebarMobile = 'closed'; }
             function openMobileSidebar() { body.dataset.sidebarMobile = 'open'; }
@@ -586,7 +603,7 @@
             });
             timezoneToggle.addEventListener('click', function() {
                 const current = localStorage.getItem('rdegon_timezone') || '';
-                const entered = window.prompt('Enter IANA time zone. Leave empty to use browser local time.', current || resolveUserTimeZone());
+                const entered = window.prompt(UI_I18N['shell.timezone.prompt'], current || resolveUserTimeZone());
                 if (entered === null) return;
                 const next = entered.trim();
                 if (!next) {
@@ -594,12 +611,18 @@
                 } else if (isValidTimeZone(next)) {
                     localStorage.setItem('rdegon_timezone', next);
                 } else {
-                    window.alert('Unsupported time zone. Use an IANA name like Europe/Moscow or America/New_York.');
+                    window.alert(UI_I18N['shell.timezone.invalid']);
                     return;
                 }
                 syncTimeZoneLabel();
                 applyTimestampFormatting(document);
                 window.dispatchEvent(new CustomEvent('rdegon:timezone-changed'));
+            });
+            languageToggle.addEventListener('click', function() {
+                const current = (document.documentElement.lang || '{{ ui_lang or "en" }}').toLowerCase();
+                const next = current === 'ru' ? 'en' : 'ru';
+                document.cookie = `ui_lang=${next}; path=/; max-age=31536000; SameSite=Lax`;
+                window.location.reload();
             });
             sidebarToggle.addEventListener('click', function() {
                 if (!desktopMq.matches) { openMobileSidebar(); return; }
@@ -623,6 +646,7 @@
             syncThemeLabel();
             syncSidebarLabel();
             syncTimeZoneLabel();
+            syncLanguageLabel();
             applyTimestampFormatting(document);
         })();
     </script>

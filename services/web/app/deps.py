@@ -158,6 +158,62 @@ COMMON_SERVICE_PORTS = {
     1514: "syslog-tcp",
     51820: "wireguard",
 }
+COLLECTOR_CATALOG: Dict[str, Dict[str, Any]] = {
+    "linux-syslog-audit": {
+        "collector_id": "linux-syslog-audit",
+        "name": "Linux Syslog / Audit Collector",
+        "node": "siem-ingest -> siem-processing",
+        "role": "Edge ingest and normalization path for Linux syslog, auditd, sshd, sudo, and VPN-side auth telemetry.",
+        "protocols": ["syslog/tcp", "auditd file forwarding", "json/http"],
+        "source_types": ["Linux", "VPN", "BSDRP"],
+        "status": "ready",
+    },
+    "windows-event-http": {
+        "collector_id": "windows-event-http",
+        "name": "Windows Event HTTP Collector",
+        "node": "Windows endpoint -> siem-ingest",
+        "role": "Collector path for Windows Security, Sysmon, PowerShell, and System/Application channels via JSON over HTTPS.",
+        "protocols": ["json/http"],
+        "source_types": ["Windows"],
+        "status": "ready",
+    },
+    "network-syslog": {
+        "collector_id": "network-syslog",
+        "name": "Network Syslog Collector",
+        "node": "siem-ingest",
+        "role": "Dedicated syslog path for Cisco, routers, switches, and perimeter network devices.",
+        "protocols": ["syslog/tcp", "syslog/udp"],
+        "source_types": ["Cisco", "Network"],
+        "status": "ready",
+    },
+    "app-json-syslog": {
+        "collector_id": "app-json-syslog",
+        "name": "Application / JSON Collector",
+        "node": "siem-ingest",
+        "role": "App-side collector path for Nextcloud, Proxmox, BSDRP, custom JSON, and service logs.",
+        "protocols": ["json/http", "syslog/tcp"],
+        "source_types": ["Nextcloud", "Proxmox", "BSDRP", "Application"],
+        "status": "ready",
+    },
+    "vulnerability-import": {
+        "collector_id": "vulnerability-import",
+        "name": "Vulnerability Import Collector",
+        "node": "siem-web / backend jobs",
+        "role": "Import path for OpenVAS / Greenbone / scanner findings into CMDB-enrichment and incident context.",
+        "protocols": ["api/import"],
+        "source_types": ["Vulnerability scanner"],
+        "status": "planned",
+    },
+    "storage-correlation": {
+        "collector_id": "storage-correlation",
+        "name": "Storage / Correlation Core",
+        "node": "siem-storage",
+        "role": "Core storage, stream correlation, batch correlation, alert aggregation, and retention execution plane.",
+        "protocols": ["clickhouse/native", "worker queues"],
+        "source_types": ["Platform"],
+        "status": "active",
+    },
+}
 INCIDENT_STATUS_TRANSITIONS = {
     "new": {"triaged", "assigned", "closed", "false_positive"},
     "open": {"triaged", "assigned", "in_progress", "closed", "false_positive"},
@@ -285,6 +341,66 @@ def _fmt(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _fmt(item) for key, item in value.items()}
     return value
+
+
+def _parse_fmt_ts(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _freshness_state(last_seen: str) -> str:
+    ts = _parse_fmt_ts(last_seen)
+    if ts is None:
+        return "unknown"
+    age_minutes = max(0, int((datetime.utcnow() - ts).total_seconds() // 60))
+    if age_minutes <= 15:
+        return "active"
+    if age_minutes <= 60:
+        return "delayed"
+    return "stale"
+
+
+def _guess_source_type(source_name: str, products: List[str], categories: List[str]) -> str:
+    blob = " ".join([source_name] + products + categories).lower()
+    if any(part.startswith("windows.") for part in products) or "sysmon" in blob or "powershell" in blob:
+        return "Windows"
+    if "cisco" in blob or "asa" in blob or "ios" in blob:
+        return "Cisco"
+    if "nextcloud" in blob:
+        return "Nextcloud"
+    if "openvas" in blob or "greenbone" in blob or "vuln" in blob or "scanner" in blob:
+        return "Vulnerability scanner"
+    if "proxmox" in blob:
+        return "Proxmox"
+    if "bsdrp" in blob or "freebsd" in blob or "opnsense" in blob or "pfsense" in blob:
+        return "BSDRP"
+    if "wireguard" in blob or "openvpn" in blob or "xray" in blob or "vpn" in blob:
+        return "VPN"
+    if "linux." in blob or "auditd" in blob or "sshd" in blob or "sudo" in blob or "systemd" in blob:
+        return "Linux"
+    return "Application"
+
+
+def _guess_collector_id(source_type: str) -> str:
+    mapping = {
+        "Windows": "windows-event-http",
+        "Cisco": "network-syslog",
+        "Linux": "linux-syslog-audit",
+        "VPN": "linux-syslog-audit",
+        "BSDRP": "app-json-syslog",
+        "Nextcloud": "app-json-syslog",
+        "Proxmox": "app-json-syslog",
+        "Vulnerability scanner": "vulnerability-import",
+        "Application": "app-json-syslog",
+    }
+    return mapping.get(source_type, "app-json-syslog")
 
 
 def _json_loads_safe(value: Any) -> Any:
@@ -1152,6 +1268,123 @@ def fetch_assets(limit: int = 50, hours: int = 24) -> List[Dict[str, Any]]:
                 'cmdb_expected_ports': list((cmdb or {}).get('expected_ports') or []),
             }
         )
+    return rows
+
+
+def fetch_source_inventory(limit: int = 200, hours: int = 24) -> List[Dict[str, Any]]:
+    ensure_cmdb_ti_support()
+    query = f"""
+        SELECT
+            source_name,
+            count() AS events,
+            max(ts) AS last_seen,
+            countIf(lower(severity) IN ('critical', 'high')) AS notable_events,
+            countIf(category = 'authentication') AS auth_events,
+            countIf(ti_indicator != '') AS ti_hits,
+            countIf(device_product = 'linux.auditd' OR message LIKE '%auditd:%') AS audit_events,
+            groupUniqArray(6)(category) AS categories,
+            groupUniqArray(6)(device_product) AS products,
+            groupUniqArray(4)(asset_environment) AS environments,
+            groupUniqArray(4)(asset_service) AS services
+        FROM
+        (
+            SELECT
+                ts,
+                severity,
+                category,
+                device_product,
+                ti_indicator,
+                message,
+                asset_environment,
+                asset_service,
+                {_event_source_label_expr('source_name')}
+            FROM siem.events
+            WHERE ts >= now() - INTERVAL {int(hours)} HOUR
+        )
+        WHERE source_name != ''
+        GROUP BY source_name
+        ORDER BY events DESC
+        LIMIT {int(limit)}
+    """
+    rows: List[Dict[str, Any]] = []
+    host_index, ip_index = _cmdb_asset_indexes()
+    for row in get_ch_client().query(query).named_results():
+        source_name = str(row["source_name"] or "").strip() or "unknown"
+        products = [str(item) for item in row["products"]]
+        categories = [str(item) for item in row["categories"]]
+        source_type = _guess_source_type(source_name, products, categories)
+        collector_id = _guess_collector_id(source_type)
+        cmdb = host_index.get(source_name.lower()) or ip_index.get(source_name)
+        last_seen = _fmt(row["last_seen"])
+        rows.append(
+            {
+                "source_name": source_name,
+                "source_type": source_type,
+                "collector_id": collector_id,
+                "collector_name": COLLECTOR_CATALOG.get(collector_id, {}).get("name", collector_id),
+                "events": int(row["events"] or 0),
+                "last_seen": last_seen,
+                "status": _freshness_state(last_seen),
+                "notable_events": int(row["notable_events"] or 0),
+                "auth_events": int(row["auth_events"] or 0),
+                "ti_hits": int(row["ti_hits"] or 0),
+                "audit_events": int(row["audit_events"] or 0),
+                "categories": categories,
+                "products": products,
+                "environments": [str(item) for item in row["environments"] if str(item or "").strip()],
+                "services": [str(item) for item in row["services"] if str(item or "").strip()],
+                "cmdb_asset_id": str((cmdb or {}).get("asset_id") or ""),
+                "cmdb_owner": str((cmdb or {}).get("owner") or ""),
+                "cmdb_criticality": str((cmdb or {}).get("criticality") or ""),
+                "cmdb_environment": str((cmdb or {}).get("environment") or ""),
+                "cmdb_service": str((cmdb or {}).get("business_service") or ""),
+            }
+        )
+    return rows
+
+
+def fetch_collector_inventory(hours: int = 24) -> List[Dict[str, Any]]:
+    sources = fetch_source_inventory(limit=500, hours=hours)
+    grouped: Dict[str, Dict[str, Any]] = {key: dict(value) for key, value in COLLECTOR_CATALOG.items()}
+    for collector_id, collector in grouped.items():
+        collector["sources_count"] = 0
+        collector["events"] = 0
+        collector["last_seen"] = ""
+        collector["status"] = collector.get("status", "ready")
+        collector["covered_sources"] = []
+    for source in sources:
+        collector = grouped.get(source["collector_id"])
+        if not collector:
+            continue
+        collector["sources_count"] += 1
+        collector["events"] += int(source["events"] or 0)
+        collector["covered_sources"].append(source["source_name"])
+        current_last = _parse_fmt_ts(str(collector["last_seen"] or ""))
+        source_last = _parse_fmt_ts(str(source["last_seen"] or ""))
+        if source_last and (current_last is None or source_last > current_last):
+            collector["last_seen"] = str(source["last_seen"] or "")
+    rows: List[Dict[str, Any]] = []
+    for collector_id, collector in grouped.items():
+        last_seen = str(collector.get("last_seen") or "")
+        status = collector.get("status", "ready")
+        if collector.get("sources_count", 0) > 0:
+            status = _freshness_state(last_seen)
+        rows.append(
+            {
+                "collector_id": collector_id,
+                "name": str(collector.get("name") or collector_id),
+                "node": str(collector.get("node") or ""),
+                "role": str(collector.get("role") or ""),
+                "protocols": list(collector.get("protocols") or []),
+                "source_types": list(collector.get("source_types") or []),
+                "sources_count": int(collector.get("sources_count") or 0),
+                "events": int(collector.get("events") or 0),
+                "last_seen": last_seen,
+                "status": status,
+                "covered_sources": sorted(set(str(item) for item in collector.get("covered_sources") or []))[:12],
+            }
+        )
+    rows.sort(key=lambda item: (0 if item["status"] == "active" else 1 if item["status"] == "ready" else 2, -item["events"], item["name"]))
     return rows
 
 

@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..config import CONFIG
 from ..security import CurrentUser, authenticate_user, create_access_token, decode_access_token, get_token_from_request
+from ..ui_text import UI_TEXT, resolve_ui_lang
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -42,6 +43,8 @@ async def login_page(request: Request):
             "request": request,
             "base_url": CONFIG.base_url,
             "error": None,
+            "ui_lang": resolve_ui_lang(request),
+            "t": UI_TEXT[resolve_ui_lang(request)],
         },
     )
 
@@ -60,6 +63,8 @@ async def login_submit(
                 "request": request,
                 "base_url": CONFIG.base_url,
                 "error": "Invalid username or password",
+                "ui_lang": resolve_ui_lang(request),
+                "t": UI_TEXT[resolve_ui_lang(request)],
             },
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
