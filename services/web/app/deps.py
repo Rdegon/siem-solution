@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import csv
 from datetime import datetime
 from functools import lru_cache
+import io
 import json
 import re
 from time import perf_counter
@@ -327,6 +329,81 @@ def _incident_key_from_alert(row: Dict[str, Any]) -> str:
     return f"rule:{row.get('rule_id', 'unknown')}"
 
 
+def _context_value(context: Any, *keys: str) -> str:
+    if not isinstance(context, dict):
+        return ""
+    for key in keys:
+        value = context
+        for part in key.split("."):
+            if not isinstance(value, dict):
+                value = None
+                break
+            value = value.get(part)
+        candidate = str(value or "").strip()
+        if candidate:
+            return candidate
+    return ""
+
+
+def _incident_campaign(row: Dict[str, Any], context: Any) -> str:
+    rule_id = int(row.get("rule_id") or 0)
+    rule_name = str(row.get("rule_name") or "").lower()
+    event_type = _context_value(context, "event_type", "event.type", "subcategory").lower()
+    if rule_id == 4003 or "port probe" in rule_name or "brute force" in rule_name:
+        return "network_intrusion"
+    if rule_id == 4004 or "privileged execution" in rule_name or "sudo" in rule_name:
+        return "privilege_escalation"
+    if rule_id == 4005 or "threat intel" in rule_name or _context_value(context, "ti_indicator"):
+        return "threat_intel"
+    if "windows_" in event_type or "windows" in rule_name:
+        return "windows_activity"
+    if "ssh" in rule_name or event_type.startswith("ssh_") or "authentication" in rule_name:
+        return "authentication"
+    if "recon" in rule_name or "system_recon" in event_type:
+        return "reconnaissance"
+    return event_type or "generic"
+
+
+def _incident_scope_key_from_alert(row: Dict[str, Any]) -> str:
+    context = row.get("context") or _json_loads_safe(row.get("context_json"))
+    source = _alert_effective_source(row.get("source"), row.get("context_json"))
+    asset_id = _context_value(context, "asset_id", "enrichment.cmdb.asset_id")
+    if not asset_id:
+        asset_id = source if source and source != "unknown" else ""
+    actor = _context_value(
+        context,
+        "source_ip",
+        "src_ip",
+        "source.ip",
+        "attacker_ip",
+        "context.source_ip",
+        "normalized.source.ip",
+    )
+    if not actor:
+        entity_key = str(row.get("entity_key") or "").strip()
+        if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", entity_key):
+            actor = entity_key
+        elif "|" in entity_key:
+            for part in entity_key.split("|"):
+                part = part.strip()
+                if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", part):
+                    actor = part
+                    break
+    ti_indicator = _context_value(context, "ti_indicator", "ioc", "indicator")
+    campaign = _incident_campaign(row, context)
+    if ti_indicator and asset_id:
+        return f"asset:{asset_id}|ti:{ti_indicator}|campaign:{campaign}"
+    if actor and asset_id:
+        return f"asset:{asset_id}|actor:{actor}|campaign:{campaign}"
+    if asset_id:
+        return f"asset:{asset_id}|campaign:{campaign}"
+    if actor and source and source != "unknown":
+        return f"source:{source}|actor:{actor}|campaign:{campaign}"
+    if source and source != "unknown":
+        return f"source:{source}|campaign:{campaign}"
+    return _incident_key_from_alert(row)
+
+
 def _severity_rank(level: str) -> int:
     order = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1, "unknown": 0}
     return order.get(str(level or "").lower(), 0)
@@ -626,7 +703,7 @@ def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
     ]
     grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for row in raw_rows:
-        grouped[_incident_key_from_alert(row)].append(row)
+        grouped[_incident_scope_key_from_alert(row)].append(row)
 
     incidents: List[Dict[str, Any]] = []
     for incident_key, items in grouped.items():
@@ -644,6 +721,28 @@ def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
         sources = list(dict.fromkeys(str(row.get("source") or "") for row in sorted_items if str(row.get("source") or "").strip()))
         samples = [row.get("context") or _json_loads_safe(row.get("context_json")) for row in sorted_items[:5]]
         samples = [sample for sample in samples if sample]
+        assets = list(
+            dict.fromkeys(
+                _context_value(sample, "asset_id", "enrichment.cmdb.asset_id")
+                for sample in samples
+                if _context_value(sample, "asset_id", "enrichment.cmdb.asset_id")
+            )
+        )
+        actors = list(
+            dict.fromkeys(
+                _context_value(sample, "source_ip", "src_ip", "source.ip", "attacker_ip")
+                for sample in samples
+                if _context_value(sample, "source_ip", "src_ip", "source.ip", "attacker_ip")
+            )
+        )
+        iocs = list(
+            dict.fromkeys(
+                _context_value(sample, "ti_indicator", "ioc", "indicator")
+                for sample in samples
+                if _context_value(sample, "ti_indicator", "ioc", "indicator")
+            )
+        )
+        campaigns = list(dict.fromkeys(_incident_campaign(row, row.get("context")) for row in sorted_items))
         severity_agg = max((str(row.get("severity") or "info").lower() for row in sorted_items), key=_severity_rank, default="info")
         ts_first = min((str(row.get("ts_first") or "") for row in sorted_items), default="")
         ts_last = max((str(row.get("ts_last") or "") for row in sorted_items), default="")
@@ -653,6 +752,10 @@ def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
             "incident_key": incident_key,
             "entity_key": entity_keys[0] if entity_keys else incident_key,
             "sources": sources,
+            "assets": assets,
+            "actors": actors,
+            "iocs": iocs,
+            "campaigns": campaigns,
             "rule_names": rule_names,
             "primary_rule": str(latest.get("rule_name") or ""),
             "primary_rule_id": int(latest.get("rule_id") or 0),
@@ -681,6 +784,10 @@ def fetch_alerts_agg(limit: int = 200) -> List[Dict[str, Any]]:
             "raw_hits_total": total_hits,
             "cluster": {
                 "sources": sources,
+                "assets": assets,
+                "actors": actors,
+                "iocs": iocs,
+                "campaigns": campaigns,
                 "rule_names": rule_names,
                 "raw_alerts": len(sorted_items),
                 "total_hits": total_hits,
@@ -858,40 +965,47 @@ def fetch_top_sources(limit: int = 8, hours: int = 24) -> List[Dict[str, Any]]:
 def fetch_top_target_ports(limit: int = 8, hours: int = 24) -> List[Dict[str, Any]]:
     ensure_event_enrichment_support()
     query = f"""
-        WITH
-            if(
-                dst_port = 0
-                AND (
-                    device_product = 'linux.sshd'
-                    OR subcategory IN ('ssh_login_success', 'ssh_login_failure', 'ssh_invalid_user', 'linux_root_ssh_login')
-                ),
-                22,
-                dst_port
-            ) AS effective_port,
-            if(src_ip = 0, '', IPv4NumToString(src_ip)) AS source_ip_text
         SELECT
-            effective_port AS dst_port,
+            port_value,
             count() AS attempts,
             countDistinct(if(source_ip_text != '', source_ip_text, 'unknown')) AS unique_sources,
             max(ts) AS last_seen,
             countIf(category = 'authentication') AS auth_attempts,
             countIf(subcategory = 'linux_firewall_blocked') AS firewall_hits,
             arrayStringConcat(groupUniqArray(5)(if(source_ip_text != '', source_ip_text, 'unknown')), ',') AS source_sample
-        FROM siem.events
-        WHERE ts >= now() - INTERVAL {int(hours)} HOUR
-          AND effective_port > 0
-          AND (
-                subcategory = 'linux_firewall_blocked'
-                OR device_product = 'linux.sshd'
-                OR subcategory IN ('ssh_login_success', 'ssh_login_failure', 'ssh_invalid_user', 'linux_root_ssh_login', 'audit_user_login_failure', 'audit_user_err')
-          )
-        GROUP BY effective_port
+        FROM
+        (
+            SELECT
+                ts,
+                category,
+                subcategory,
+                device_product,
+                if(src_ip = 0, '', IPv4NumToString(src_ip)) AS source_ip_text,
+                if(
+                    dst_port = 0
+                    AND (
+                        device_product = 'linux.sshd'
+                        OR subcategory IN ('ssh_login_success', 'ssh_login_failure', 'ssh_invalid_user', 'linux_root_ssh_login')
+                    ),
+                    22,
+                    dst_port
+                ) AS port_value
+            FROM siem.events
+            WHERE ts >= now() - INTERVAL {int(hours)} HOUR
+              AND (
+                    subcategory = 'linux_firewall_blocked'
+                    OR device_product = 'linux.sshd'
+                    OR subcategory IN ('ssh_login_success', 'ssh_login_failure', 'ssh_invalid_user', 'linux_root_ssh_login', 'audit_user_login_failure', 'audit_user_err')
+              )
+        )
+        WHERE port_value > 0
+        GROUP BY port_value
         ORDER BY attempts DESC
         LIMIT {int(limit)}
     """
     rows: List[Dict[str, Any]] = []
     for row in get_ch_client().query(query).named_results():
-        port_value = int(row["dst_port"] or 0)
+        port_value = int(row["port_value"] or 0)
         auth_attempts = int(row["auth_attempts"] or 0)
         firewall_hits = int(row["firewall_hits"] or 0)
         signal = "password spray / auth probing" if auth_attempts else "network scan / blocked probe" if firewall_hits else "service connection attempts"
@@ -1467,6 +1581,143 @@ def save_threat_intel_indicator(
         "severity": safe_severity,
         "confidence": safe_confidence,
     }
+
+
+def _parse_import_records(payload: str) -> List[Dict[str, Any]]:
+    text = str(payload or "").strip()
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        if isinstance(data.get("items"), list):
+            return [dict(item) for item in data["items"] if isinstance(item, dict)]
+        return [data]
+    if isinstance(data, list):
+        return [dict(item) for item in data if isinstance(item, dict)]
+    reader = csv.DictReader(io.StringIO(text))
+    rows: List[Dict[str, Any]] = []
+    for row in reader:
+        if any(str(value or "").strip() for value in row.values()):
+            rows.append({str(key or "").strip(): str(value or "").strip() for key, value in row.items()})
+    return rows
+
+
+def import_cmdb_assets(payload: str) -> Dict[str, Any]:
+    records = _parse_import_records(payload)
+    if not records:
+        raise ValueError("No CMDB records found in JSON/CSV payload")
+    saved = 0
+    for row in records:
+        asset_id = str(row.get("asset_id") or row.get("id") or "").strip()
+        hostname = str(row.get("hostname") or row.get("host") or row.get("name") or "").strip()
+        ip = str(row.get("ip") or row.get("address") or "").strip()
+        if not asset_id:
+            if hostname:
+                asset_id = f"asset-{re.sub(r'[^a-z0-9]+', '-', hostname.lower()).strip('-')}"
+            elif ip:
+                asset_id = f"asset-{ip.replace('.', '-')}"
+        if not asset_id:
+            continue
+        save_cmdb_asset(
+            asset_id=asset_id,
+            asset_type=str(row.get("asset_type") or row.get("type") or "server"),
+            hostname=hostname,
+            ip=ip,
+            owner=str(row.get("owner") or ""),
+            criticality=str(row.get("criticality") or "medium"),
+            environment=str(row.get("environment") or "prod"),
+            business_service=str(row.get("business_service") or row.get("service") or ""),
+            os_family=str(row.get("os_family") or row.get("os") or ""),
+            expected_ports=str(row.get("expected_ports") or row.get("ports") or ""),
+            tags=str(row.get("tags") or ""),
+            notes=str(row.get("notes") or row.get("description") or ""),
+        )
+        saved += 1
+    return {"saved": saved, "parsed": len(records)}
+
+
+def import_threat_intel_entries(payload: str) -> Dict[str, Any]:
+    records = _parse_import_records(payload)
+    if not records:
+        raise ValueError("No threat intel records found in JSON/CSV payload")
+    saved = 0
+    for row in records:
+        indicator = str(row.get("indicator") or row.get("value") or row.get("ioc") or "").strip()
+        if not indicator:
+            continue
+        save_threat_intel_indicator(
+            indicator_type=str(row.get("indicator_type") or row.get("type") or "raw"),
+            indicator=indicator,
+            provider=str(row.get("provider") or row.get("feed") or "import"),
+            severity=str(row.get("severity") or "medium"),
+            confidence=int(str(row.get("confidence") or 50)),
+            description=str(row.get("description") or row.get("notes") or ""),
+            tags=str(row.get("tags") or row.get("labels") or ""),
+        )
+        saved += 1
+    return {"saved": saved, "parsed": len(records)}
+
+
+def sync_observed_assets_to_cmdb(hours: int = 72, limit: int = 200) -> Dict[str, Any]:
+    ensure_cmdb_ti_support()
+    observed_query = f"""
+        SELECT
+            asset_name,
+            any(host_name) AS host_name,
+            any(log_source) AS log_source,
+            any(src_ip_text) AS src_ip_text,
+            any(device_product) AS device_product,
+            max(ts) AS last_seen
+        FROM
+        (
+            SELECT
+                if(host_name != '' AND host_name != '-', host_name, log_source) AS asset_name,
+                host_name,
+                log_source,
+                if(src_ip = 0, '', IPv4NumToString(src_ip)) AS src_ip_text,
+                device_product,
+                ts
+            FROM siem.events
+            WHERE ts >= now() - INTERVAL {int(hours)} HOUR
+        )
+        WHERE asset_name != ''
+        GROUP BY asset_name
+        ORDER BY last_seen DESC
+        LIMIT {int(limit)}
+    """
+    existing = fetch_cmdb_assets(limit=5000)
+    known = {item["asset_id"] for item in existing} | {item["hostname"] for item in existing if item["hostname"]} | {item["ip"] for item in existing if item["ip"]}
+    created = 0
+    for row in get_ch_client().query(observed_query).named_results():
+        asset_name = str(row["asset_name"] or "").strip()
+        host_name = str(row["host_name"] or "").strip()
+        ip_value = str(row["src_ip_text"] or "").strip()
+        if asset_name in known or host_name in known or ip_value in known:
+            continue
+        seed = host_name or asset_name or ip_value
+        if not seed:
+            continue
+        asset_id = f"asset-{re.sub(r'[^a-z0-9]+', '-', seed.lower()).strip('-')}"
+        save_cmdb_asset(
+            asset_id=asset_id,
+            asset_type="server",
+            hostname=host_name or asset_name,
+            ip=ip_value,
+            owner="soc-discovered",
+            criticality="medium",
+            environment="unknown",
+            business_service="Observed asset",
+            os_family="windows" if str(row["device_product"] or "").startswith("windows.") else "linux",
+            expected_ports="",
+            tags="auto-discovered,telemetry",
+            notes=f"Auto-created from observed events during the last {int(hours)} hours.",
+        )
+        created += 1
+        known.add(asset_id)
+    return {"created": created, "hours": int(hours), "limit": int(limit)}
 
 
 def archive_events_to_cold(older_than_hours: int) -> Dict[str, Any]:

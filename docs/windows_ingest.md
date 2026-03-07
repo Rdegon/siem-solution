@@ -23,9 +23,36 @@ Supported normalized event families:
 
 ## Recommended shipping options
 
-1. Winlogbeat or Elastic Agent -> HTTP JSON into SIEM ingest.
-2. NxLog / syslog-ng -> forward Windows Event XML or JSON payloads.
-3. Sysmon + Winlogbeat -> same HTTP JSON path.
+1. Built-in PowerShell collector -> direct HTTPS POST into `/ingest/json`.
+2. Winlogbeat or Elastic Agent -> HTTP JSON into SIEM ingest.
+3. NxLog / syslog-ng -> forward Windows Event XML or JSON payloads.
+4. Sysmon + Winlogbeat -> same HTTP JSON path.
+
+## Built-in collector deployment
+
+Repository artifact:
+
+- `deploy/windows/rdegon-siem-collector.ps1`
+
+What it does:
+
+- reads Security / System / Application / Sysmon / PowerShell channels
+- tracks the last delivered `RecordId` per channel
+- posts batches to `https://<siem-ingest>/ingest/json`
+- can install itself as a scheduled task that runs every minute
+
+Minimal deployment on a Windows host:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\rdegon-siem-collector.ps1 -IngestUrl "https://192.168.1.35/ingest/json"
+powershell -ExecutionPolicy Bypass -File .\rdegon-siem-collector.ps1 -InstallTask
+```
+
+Notes:
+
+- for Sysmon coverage, Sysmon must already be installed on the endpoint
+- the collector accepts the current lab self-signed certificate
+- if you move to a trusted TLS certificate, remove the permissive certificate callback from the script
 
 ## Minimal JSON example
 

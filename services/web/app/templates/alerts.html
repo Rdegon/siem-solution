@@ -258,6 +258,10 @@ function renderDrawer(row) {
             <div class="hint">Incident cluster</div>
             <div class="kv-list">
                 <div class="kv"><div class="kv-key">Sources</div><div class="kv-value">${escapeHtml((cluster.sources || []).join(', ') || 'n/a')}</div></div>
+                <div class="kv"><div class="kv-key">Assets</div><div class="kv-value">${escapeHtml((cluster.assets || []).join(', ') || 'n/a')}</div></div>
+                <div class="kv"><div class="kv-key">Actors</div><div class="kv-value">${escapeHtml((cluster.actors || []).join(', ') || 'n/a')}</div></div>
+                <div class="kv"><div class="kv-key">IOCs</div><div class="kv-value">${escapeHtml((cluster.iocs || []).join(', ') || 'n/a')}</div></div>
+                <div class="kv"><div class="kv-key">Campaigns</div><div class="kv-value">${escapeHtml((cluster.campaigns || []).join(', ') || 'n/a')}</div></div>
                 <div class="kv"><div class="kv-key">Rules</div><div class="kv-value">${escapeHtml((cluster.rule_names || []).join(', ') || 'n/a')}</div></div>
                 <div class="kv"><div class="kv-key">Raw alerts</div><div class="kv-value">${Number(cluster.raw_alerts || 0)}</div></div>
                 <div class="kv"><div class="kv-key">Total hits</div><div class="kv-value">${Number(cluster.total_hits || 0)}</div></div>

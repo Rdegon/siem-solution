@@ -21,6 +21,9 @@ from ..deps import (
     fetch_recent_alerts,
     fetch_resource_overview,
     fetch_severity_breakdown,
+    import_cmdb_assets,
+    import_threat_intel_entries,
+    sync_observed_assets_to_cmdb,
     fetch_threat_intel_entries,
     fetch_top_target_ports,
     save_active_list_item,
@@ -267,6 +270,33 @@ async def create_cmdb_asset(
     return _render_assets_page(request, user, status=f"CMDB asset saved: {item['asset_id']}")
 
 
+@router.post('/assets/cmdb/import', response_class=HTMLResponse)
+async def import_cmdb_asset_records(
+    request: Request,
+    payload: str = Form(...),
+    user=Depends(require_permissions('cmdb:write')),
+) -> HTMLResponse:
+    try:
+        result = import_cmdb_assets(payload)
+    except Exception as exc:  # noqa: BLE001
+        return _render_assets_page(request, user, error=f'Unable to import CMDB assets: {exc!s}')
+    return _render_assets_page(request, user, status=f"CMDB import completed: {result['saved']} saved from {result['parsed']} parsed records.")
+
+
+@router.post('/assets/cmdb/sync-observed', response_class=HTMLResponse)
+async def sync_observed_assets(
+    request: Request,
+    hours: int = Form(72),
+    limit: int = Form(200),
+    user=Depends(require_permissions('cmdb:write')),
+) -> HTMLResponse:
+    try:
+        result = sync_observed_assets_to_cmdb(hours=max(1, hours), limit=max(1, min(1000, limit)))
+    except Exception as exc:  # noqa: BLE001
+        return _render_assets_page(request, user, error=f'Unable to sync observed assets: {exc!s}')
+    return _render_assets_page(request, user, status=f"Observed asset sync completed: {result['created']} provisional assets created.")
+
+
 @router.post('/assets/threat-intel', response_class=HTMLResponse)
 async def create_threat_intel_item(
     request: Request,
@@ -292,6 +322,19 @@ async def create_threat_intel_item(
     except Exception as exc:  # noqa: BLE001
         return _render_assets_page(request, user, error=f'Unable to save threat intel indicator: {exc!s}')
     return _render_assets_page(request, user, status=f"Threat intel indicator saved: {item['indicator_type']} / {item['indicator']}")
+
+
+@router.post('/assets/threat-intel/import', response_class=HTMLResponse)
+async def import_threat_intel_records(
+    request: Request,
+    payload: str = Form(...),
+    user=Depends(require_permissions('threat_intel:write')),
+) -> HTMLResponse:
+    try:
+        result = import_threat_intel_entries(payload)
+    except Exception as exc:  # noqa: BLE001
+        return _render_assets_page(request, user, error=f'Unable to import threat intel: {exc!s}')
+    return _render_assets_page(request, user, status=f"Threat intel import completed: {result['saved']} saved from {result['parsed']} parsed records.")
 
 
 @router.post('/api/rules/{rule_id}/test', response_class=JSONResponse)
