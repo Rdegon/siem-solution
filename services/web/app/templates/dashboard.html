@@ -9,7 +9,7 @@
     <section class="kpi"><p class="kpi-label">Open incidents</p><div class="kpi-value">{{ metrics.open_incidents_24h or 0 }}</div><div class="kpi-meta">Aggregated incidents still not closed during the last 24 hours.</div></section>
     <section class="kpi"><p class="kpi-label">New alerts</p><div class="kpi-value">{{ metrics.new_alerts_24h or 0 }}</div><div class="kpi-meta">Fresh raw alerts waiting for initial triage.</div></section>
     <section class="kpi"><p class="kpi-label">Events 1h</p><div class="kpi-value">{{ metrics.events_1h or 0 }}</div><div class="kpi-meta">Current ingestion tempo across all monitored nodes.</div></section>
-    <section class="kpi"><p class="kpi-label">Audit events 24h</p><div class="kpi-value">{{ metrics.audit_events_24h or 0 }}</div><div class="kpi-meta">auditd coverage visible in the same event pipeline.</div></section>
+    <section class="kpi"><p class="kpi-label">TI hits 24h</p><div class="kpi-value">{{ metrics.ti_hits_24h or 0 }}</div><div class="kpi-meta">Events that matched threat intel indicators during the last 24 hours.</div></section>
 </div>
 <div class="grid-2">
     <section class="panel">
@@ -22,6 +22,11 @@
     </section>
 </div>
 <div class="grid-3">
+    <section class="kpi"><p class="kpi-label">Audit events 24h</p><div class="kpi-value">{{ metrics.audit_events_24h or 0 }}</div><div class="kpi-meta">auditd coverage visible in the same event pipeline.</div></section>
+    <section class="kpi"><p class="kpi-label">Critical assets observed</p><div class="kpi-value">{{ metrics.critical_assets_observed_24h or 0 }}</div><div class="kpi-meta">Distinct CMDB assets tagged as high or critical that produced events in the last 24 hours.</div></section>
+    <section class="kpi"><p class="kpi-label">Active sources 24h</p><div class="kpi-value">{{ metrics.active_sources_24h or 0 }}</div><div class="kpi-meta">Unique reporting hosts or log sources seen during the last 24 hours.</div></section>
+</div>
+<div class="grid-3">
     <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Events by severity</h3><p class="panel-subtitle">Severity distribution for the last 24 hours.</p></div></div><div class="panel-body"><div class="stacked-bar" id="eventsSeverityBar"></div><div class="legend" id="eventsSeverityLegend"></div></div></section>
     <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Alerts by status</h3><p class="panel-subtitle">SOC workflow state for raw alerts.</p></div></div><div class="panel-body"><div class="stacked-bar" id="alertStatusBar"></div><div class="legend" id="alertStatusLegend"></div></div></section>
     <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Alerts by severity</h3><p class="panel-subtitle">Which alert levels dominate the queue.</p></div></div><div class="panel-body"><div class="stacked-bar" id="alertSeverityBar"></div><div class="legend" id="alertSeverityLegend"></div></div></section>
@@ -29,6 +34,29 @@
 <div class="grid-2">
     <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top sources</h3><p class="panel-subtitle">Most active monitored sources during the last 24 hours.</p></div></div><div class="panel-body table-wrap"><table><thead><tr><th>Source</th><th>Events</th><th>Last seen</th></tr></thead><tbody>{% for source in top_sources %}<tr><td class="mono">{{ source.log_source }}</td><td>{{ source.events }}</td><td data-ts="{{ source.last_seen }}">{{ source.last_seen }}</td></tr>{% endfor %}</tbody></table></div></section>
     <section class="panel"><div class="panel-header"><div><h3 class="panel-title">Top categories</h3><p class="panel-subtitle">Most frequent normalized categories in the event stream.</p></div></div><div class="panel-body"><div class="mini-list">{% set max_events = (top_categories[0].events if top_categories else 1) %}{% for row in top_categories %}<div class="mini-row"><div><div style="font-weight:600;">{{ row.category }}</div><div class="page-note">{{ row.events }} events</div></div><div style="width:160px;"><div class="mini-bar-track"><div class="mini-bar" style="width: {{ (row.events / max_events * 100) if max_events else 0 }}%;"></div></div></div></div>{% endfor %}</div></div></section>
+</div>
+<section class="panel">
+    <div class="panel-header"><div><h3 class="panel-title">Targeted ports</h3><p class="panel-subtitle">Which services are being probed or targeted, and whether the dominant signal is blocked network traffic or password-oriented authentication activity.</p></div></div>
+    <div class="panel-body table-wrap">
+        <table>
+            <thead><tr><th>Port</th><th>Service</th><th>Attempts</th><th>Unique sources</th><th>Signal</th><th>Last seen</th></tr></thead>
+            <tbody>
+                {% for row in top_target_ports %}
+                <tr>
+                    <td class="table-code">{{ row.dst_port }}</td>
+                    <td>{{ row.service }}</td>
+                    <td>{{ row.attempts }}</td>
+                    <td>{{ row.unique_sources }}</td>
+                    <td>{{ row.signal }}</td>
+                    <td data-ts="{{ row.last_seen }}">{{ row.last_seen }}</td>
+                </tr>
+                {% endfor %}
+                {% if not top_target_ports %}
+                <tr><td colspan="6"><div class="empty-box">No targeted port telemetry in the selected window.</div></td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
 </div>
 </div>
 {% endblock %}

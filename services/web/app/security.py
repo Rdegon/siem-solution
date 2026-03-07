@@ -14,12 +14,67 @@ from .config import CONFIG
 
 ROLE = Literal["admin", "analyst", "viewer"]
 ALLOWED_ROLES = {"admin", "analyst", "viewer"}
+PERMISSION = Literal[
+    "dashboard:view",
+    "events:view",
+    "events:query",
+    "alerts:view",
+    "alerts:history:view",
+    "incidents:update",
+    "assets:view",
+    "rules:test",
+    "rules:write",
+    "active_lists:write",
+    "cmdb:write",
+    "threat_intel:write",
+    "resources:view",
+    "storage:archive",
+]
+ROLE_PERMISSIONS: dict[ROLE, set[str]] = {
+    "viewer": {
+        "dashboard:view",
+        "events:view",
+        "events:query",
+        "alerts:view",
+        "alerts:history:view",
+        "assets:view",
+        "resources:view",
+    },
+    "analyst": {
+        "dashboard:view",
+        "events:view",
+        "events:query",
+        "alerts:view",
+        "alerts:history:view",
+        "incidents:update",
+        "assets:view",
+        "rules:test",
+        "resources:view",
+    },
+    "admin": {
+        "dashboard:view",
+        "events:view",
+        "events:query",
+        "alerts:view",
+        "alerts:history:view",
+        "incidents:update",
+        "assets:view",
+        "rules:test",
+        "rules:write",
+        "active_lists:write",
+        "cmdb:write",
+        "threat_intel:write",
+        "resources:view",
+        "storage:archive",
+    },
+}
 
 
 class User:
     def __init__(self, username: str, role: ROLE) -> None:
         self.username = username
         self.role: ROLE = role
+        self.permissions = sorted(ROLE_PERMISSIONS.get(role, set()))
 
 
 @lru_cache(maxsize=1)
@@ -107,6 +162,25 @@ def require_roles(*required_roles: ROLE):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Insufficient role: required one of {sorted(accepted)}, got {user.role}",
+            )
+        return user
+
+    return dependency
+
+
+def has_permission(user: User, permission: str) -> bool:
+    return permission in ROLE_PERMISSIONS.get(user.role, set())
+
+
+def require_permissions(*required_permissions: PERMISSION):
+    required = tuple(required_permissions)
+
+    def dependency(user: CurrentUser) -> User:
+        missing = [permission for permission in required if not has_permission(user, permission)]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing permission(s): {', '.join(missing)}",
             )
         return user
 

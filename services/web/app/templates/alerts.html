@@ -77,7 +77,7 @@
 const mode = {{ view | tojson }};
 const alertsAgg = {{ alerts_agg | tojson }};
 const alertsRaw = {{ alerts_raw | tojson }};
-const canEditWorkflow = {{ (user.role in ['admin', 'analyst']) | tojson }};
+const canEditWorkflow = {{ ('incidents:update' in user.permissions) | tojson }};
 const statusTransitions = {{ status_transitions | tojson }};
 const rows = mode === 'raw' ? alertsRaw : alertsAgg;
 const alertsHead = document.getElementById('alertsHead');

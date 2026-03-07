@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import shlex
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -112,6 +113,50 @@ class NormalizerRule:
 
 def _clean_value(value: Any) -> str:
     return str(value or "").replace("\x1d", " ").strip()
+
+
+def _json_loads_safe(value: str) -> Dict[str, Any]:
+    text = _clean_value(value)
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _dotted_get(mapping: Dict[str, Any], path: str) -> Any:
+    if path in mapping:
+        return mapping.get(path)
+    current: Any = mapping
+    for part in path.split("."):
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return None
+    return current
+
+
+def _first_non_empty(mapping: Dict[str, Any], *paths: str) -> str:
+    for path in paths:
+        value = _dotted_get(mapping, path)
+        text = _clean_value(value)
+        if text:
+            return text
+    return ""
+
+
+def _flatten_prefixed(mapping: Dict[str, Any], prefix: str) -> Dict[str, str]:
+    result: Dict[str, str] = {}
+    for key, value in mapping.items():
+        if not isinstance(key, str) or not key.startswith(prefix):
+            continue
+        suffix = key[len(prefix):]
+        text = _clean_value(value)
+        if suffix and text:
+            result[suffix] = text
+    return result
 
 
 def _is_ipv4(value: str) -> bool:
@@ -415,6 +460,7 @@ def _parse_sshd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
             "user.name": accepted.group("user"),
             "source.ip": accepted.group("ip"),
             "source.port": accepted.group("port"),
+            "destination.port": "22",
             "network.transport": "tcp",
             "auth.method": accepted.group("method").lower(),
         }
@@ -431,6 +477,7 @@ def _parse_sshd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
             "user.name": invalid_user.group("user"),
             "source.ip": invalid_user.group("ip"),
             "source.port": invalid_user.group("port"),
+            "destination.port": "22",
             "network.transport": "tcp",
             "auth.method": "unknown",
         }
@@ -447,6 +494,7 @@ def _parse_sshd(body: str, base: Dict[str, Any]) -> Dict[str, Any]:
             "user.name": failed.group("user"),
             "source.ip": failed.group("ip"),
             "source.port": failed.group("port"),
+            "destination.port": "22",
             "network.transport": "tcp",
             "auth.method": failed.group("method").lower(),
         }
@@ -643,6 +691,192 @@ def _parse_account_tools(program: str, body: str, base: Dict[str, Any]) -> Dict[
     }
 
 
+def _strip_xml_ns(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _parse_windows_xml_payload(message: str) -> Dict[str, Any]:
+    text = _clean_value(message)
+    if not text.startswith("<Event"):
+        return {}
+    try:
+        root = ET.fromstring(text)
+    except Exception:
+        return {}
+    payload: Dict[str, Any] = {"Event": {"System": {}, "EventData": {"Data": {}}}}
+    system = payload["Event"]["System"]
+    event_data = payload["Event"]["EventData"]["Data"]
+    for child in root:
+        child_name = _strip_xml_ns(child.tag)
+        if child_name == "System":
+            for node in child:
+                node_name = _strip_xml_ns(node.tag)
+                if node_name == "Provider":
+                    system["Provider"] = {"Name": node.attrib.get("Name", "")}
+                else:
+                    system[node_name] = _clean_value(node.text) or _clean_value(node.attrib.get("Name"))
+        elif child_name == "EventData":
+            for node in child:
+                if _strip_xml_ns(node.tag) != "Data":
+                    continue
+                key = _clean_value(node.attrib.get("Name")) or f"field_{len(event_data) + 1}"
+                event_data[key] = _clean_value(node.text)
+    return payload
+
+
+def _build_windows_event(mapping: Dict[str, Any], base: Dict[str, Any]) -> Dict[str, Any]:
+    event_data = _flatten_prefixed(mapping, "winlog.event_data.")
+    payload_event_data = _dotted_get(mapping, "winlog.event_data")
+    if isinstance(payload_event_data, dict):
+        for key, value in payload_event_data.items():
+            text = _clean_value(value)
+            if text and str(key) not in event_data:
+                event_data[str(key)] = text
+    xml_event_data = _dotted_get(mapping, "Event.EventData.Data")
+    if isinstance(xml_event_data, dict):
+        for key, value in xml_event_data.items():
+            text = _clean_value(value)
+            if text and str(key) not in event_data:
+                event_data[str(key)] = text
+
+    event_id = _first_non_empty(mapping, "event.code", "winlog.event_id", "Event.System.EventID", "winlog.event.code")
+    if not event_id:
+        return {}
+    channel = _first_non_empty(mapping, "winlog.channel", "Event.System.Channel", "channel").lower()
+    provider_name = _first_non_empty(mapping, "winlog.provider_name", "Event.System.Provider.Name", "provider_name").lower()
+    computer_name = _canonical_host_name(_first_non_empty(mapping, "winlog.computer_name", "host.name", "Event.System.Computer", "computer_name", "log_source", "source"))
+    message = _first_non_empty(mapping, "message", "event.original", "winlog.message", "rendering.message")
+    source_ip = _first_non_empty(
+        event_data,
+        "IpAddress",
+        "SourceAddress",
+        "SourceIp",
+        "SourceNetworkAddress",
+        "ClientAddress",
+        "RemoteAddress",
+    )
+    source_port = _first_non_empty(event_data, "IpPort", "SourcePort", "SourceNetworkPort", "ClientPort", "RemotePort")
+    destination_port = _first_non_empty(event_data, "DestPort", "DestinationPort", "NetworkInformationDestPort")
+    user_name = _first_non_empty(event_data, "TargetUserName", "AccountName", "User", "SubjectUserName", "SubjectAccountName")
+    target_user = _first_non_empty(event_data, "TargetUserName", "MemberName", "TargetSid", "SamAccountName")
+    process_executable = _first_non_empty(event_data, "NewProcessName", "ProcessName", "Image", "Application", "ParentImage")
+    process_command = _first_non_empty(event_data, "CommandLine", "ProcessCommandLine", "ScriptBlockText")
+    process_name = _basename(process_executable or _first_non_empty(event_data, "Image", "OriginalFileName", "ProcessName"))
+    logon_type = _first_non_empty(event_data, "LogonType")
+    service_name = _first_non_empty(event_data, "ServiceName")
+    group_name = _first_non_empty(event_data, "GroupName", "TargetSid")
+
+    provider = "windows.sysmon" if "sysmon" in provider_name or "sysmon" in channel else "windows.security"
+    if "powershell" in channel or "powershell" in provider_name:
+        provider = "windows.powershell"
+    elif "firewall" in channel:
+        provider = "windows.firewall"
+
+    result = {
+        "event.provider": provider,
+        "event.code": event_id,
+        "event.category": "windows",
+        "event.action": "observe",
+        "event.type": "windows_event",
+        "event.outcome": "unknown",
+        "event.severity": "info",
+        "host.name": computer_name,
+        "log_source": computer_name or base.get("source", ""),
+        "source.ip": source_ip if _is_ipv4(source_ip) else "",
+        "source.port": source_port,
+        "destination.port": destination_port,
+        "user.name": user_name,
+        "user.target.name": target_user if target_user and target_user != user_name else "",
+        "process.executable": process_executable,
+        "process.name": process_name,
+        "process.command_line": process_command,
+        "group.name": group_name,
+        "service.name": service_name,
+        "auth.logon_type": logon_type,
+        "event.original": message or base.get("message", ""),
+    }
+
+    if provider == "windows.sysmon" and event_id == "1":
+        _set_event_shape(result, category="process", action="process_create", event_type="windows_process_create")
+        result["event.outcome"] = "success"
+    elif provider == "windows.sysmon" and event_id == "3":
+        _set_event_shape(result, category="network", action="network_connect", event_type="windows_network_connection")
+        result["event.outcome"] = "success"
+    elif provider == "windows.sysmon" and event_id == "13":
+        _set_event_shape(result, category="persistence", action="registry_set", event_type="windows_registry_value_set")
+        result["event.outcome"] = "success"
+        result["event.severity"] = "medium"
+    elif event_id == "4624":
+        _set_event_shape(result, category="authentication", action="authentication_success", event_type="windows_logon_success")
+        result["event.outcome"] = "success"
+        result["event.severity"] = "high" if user_name.lower() in {"administrator", "admin"} or logon_type == "10" else "info"
+    elif event_id == "4625":
+        _set_event_shape(result, category="authentication", action="authentication_failed", event_type="windows_logon_failure")
+        result["event.outcome"] = "failure"
+        result["event.severity"] = "medium"
+    elif event_id == "4688":
+        _set_event_shape(result, category="process", action="process_create", event_type="windows_process_create")
+        result["event.outcome"] = "success"
+    elif event_id == "4698":
+        _set_event_shape(result, category="persistence", action="scheduled_task_create", event_type="windows_scheduled_task_created")
+        result["event.outcome"] = "success"
+        result["event.severity"] = "high"
+    elif event_id in {"4720", "624"}:
+        _set_event_shape(result, category="identity", action="account_create", event_type="windows_user_created")
+        result["event.outcome"] = "success"
+        result["event.severity"] = "medium"
+    elif event_id in {"4726", "630"}:
+        _set_event_shape(result, category="identity", action="account_delete", event_type="windows_user_deleted")
+        result["event.outcome"] = "success"
+        result["event.severity"] = "medium"
+    elif event_id in {"4728", "4732", "4756"}:
+        _set_event_shape(result, category="privilege", action="group_membership_add", event_type="windows_user_added_to_privileged_group")
+        result["event.outcome"] = "success"
+        result["event.severity"] = "high"
+    elif event_id in {"5156", "5157"}:
+        _set_event_shape(result, category="network", action="connection_allow" if event_id == "5156" else "connection_block", event_type="windows_firewall_connection")
+        result["event.outcome"] = "success" if event_id == "5156" else "failure"
+        result["event.severity"] = "low" if event_id == "5156" else "medium"
+        result["event.provider"] = "windows.firewall"
+    elif event_id == "7045":
+        _set_event_shape(result, category="persistence", action="service_install", event_type="windows_service_installed")
+        result["event.outcome"] = "success"
+        result["event.severity"] = "high"
+    elif event_id == "1102":
+        _set_event_shape(result, category="defense_evasion", action="audit_log_clear", event_type="windows_audit_log_cleared")
+        result["event.outcome"] = "success"
+        result["event.severity"] = "high"
+
+    command_lower = _clean_value(process_command).lower()
+    executable_lower = _basename(process_executable)
+    if executable_lower in {"powershell.exe", "pwsh.exe"} or "powershell" in command_lower:
+        result["event.provider"] = "windows.powershell"
+        if "-enc" in command_lower or "-encodedcommand" in command_lower:
+            _set_event_shape(result, category="execution", action="powershell_encoded_command", event_type="windows_powershell_encoded_command")
+            result["event.outcome"] = "success"
+            result["event.severity"] = "high"
+    elif executable_lower in {"rundll32.exe", "regsvr32.exe", "mshta.exe", "wmic.exe"}:
+        result["event.severity"] = "medium"
+
+    return result
+
+
+def _parse_windows_event(raw_event: Dict[str, Any]) -> Dict[str, Any]:
+    payload = _json_loads_safe(raw_event.get("message", ""))
+    xml_payload = _parse_windows_xml_payload(raw_event.get("message", ""))
+    merged: Dict[str, Any] = dict(raw_event)
+    if payload:
+        merged.update(payload)
+    if xml_payload:
+        merged.update(xml_payload)
+    if not (
+        _first_non_empty(merged, "winlog.event_id", "Event.System.EventID", "event.code")
+        or any(str(key).startswith("winlog.") for key in merged)
+    ):
+        return {}
+    return _build_windows_event(merged, raw_event)
+
+
 def _parse_linux_syslog(raw_event: Dict[str, Any]) -> Dict[str, Any]:
     message = _clean_value(raw_event.get("message"))
     source_ip = _clean_value(raw_event.get("source"))
@@ -725,7 +959,10 @@ def _parse_linux_syslog(raw_event: Dict[str, Any]) -> Dict[str, Any]:
 def _enrich_raw_event(raw_event: Dict[str, Any]) -> Dict[str, Any]:
     enriched = dict(raw_event)
     source_type = _clean_value(raw_event.get("source_type")).lower()
-    if source_type == "syslog" or _clean_value(raw_event.get("message")).startswith("<"):
+    windows_event = _parse_windows_event(raw_event)
+    if windows_event:
+        _merge_non_empty(enriched, windows_event)
+    elif source_type == "syslog" or _clean_value(raw_event.get("message")).startswith("<"):
         _merge_non_empty(enriched, _parse_linux_syslog(raw_event))
     return enriched
 

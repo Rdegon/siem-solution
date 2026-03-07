@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from .auth import get_current_user
+from ..security import require_permissions
 from ..deps import EVENT_ROW_LIMIT_DEFAULT, execute_event_query
 from ..templates import templates
 
@@ -37,7 +38,7 @@ async def events_page(
 
 
 @router.post('/api/events/query', response_class=JSONResponse)
-async def events_query_api(payload: dict = Body(default={}), user=Depends(get_current_user)) -> JSONResponse:
+async def events_query_api(payload: dict = Body(default={}), user=Depends(require_permissions('events:query'))) -> JSONResponse:
     query_text = str(payload.get('query', '') or '')
     window = str(payload.get('window', '24h') or '24h')
     storage = str(payload.get('storage', 'hot') or 'hot')

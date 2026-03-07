@@ -5,7 +5,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .auth import get_current_user
-from ..security import require_roles
+from ..security import require_permissions
 from ..deps import (
     INCIDENT_STATUS_TRANSITIONS,
     fetch_alert_history,
@@ -66,7 +66,7 @@ async def update_alert_api(
     view: str,
     record_id: str,
     payload: dict = Body(default={}),
-    user=Depends(require_roles('admin', 'analyst')),
+    user=Depends(require_permissions('incidents:update')),
 ) -> JSONResponse:
     if view not in {'raw', 'agg'}:
         return JSONResponse({'error': 'Unsupported alert view'}, status_code=400)

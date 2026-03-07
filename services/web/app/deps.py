@@ -34,6 +34,7 @@ EVENT_BASE_SELECT_SQL = """
     SELECT
         ts,
         event_id,
+        event_code,
         category,
         subcategory,
         event_action,
@@ -46,11 +47,20 @@ EVENT_BASE_SELECT_SQL = """
         device_product,
         log_source,
         host_name,
+        asset_id,
+        asset_owner,
+        asset_criticality,
+        asset_environment,
+        asset_service,
         user_name,
         target_user,
         process_name,
         process_executable,
         process_command,
+        ti_indicator,
+        ti_indicator_type,
+        ti_provider,
+        ti_severity,
         lower(severity) AS severity,
         message,
         normalized_json,
@@ -59,6 +69,7 @@ EVENT_BASE_SELECT_SQL = """
 EVENT_VIEW_COLUMNS = [
     'ts',
     'event_id',
+    'event_code',
     'category',
     'subcategory',
     'event_action',
@@ -71,11 +82,20 @@ EVENT_VIEW_COLUMNS = [
     'device_product',
     'log_source',
     'host_name',
+    'asset_id',
+    'asset_owner',
+    'asset_criticality',
+    'asset_environment',
+    'asset_service',
     'user_name',
     'target_user',
     'process_name',
     'process_executable',
     'process_command',
+    'ti_indicator',
+    'ti_indicator_type',
+    'ti_provider',
+    'ti_severity',
     'severity',
     'message',
     'normalized_json',
@@ -96,6 +116,46 @@ DETECTION_RULE_TABLE = "siem.detection_rule_catalog"
 ACTIVE_LIST_TABLE = "siem.active_list_items"
 ALERT_HISTORY_TABLE = "siem.alert_history"
 EVENTS_COLD_TABLE = "siem.events_cold"
+CMDB_ASSET_TABLE = "siem.cmdb_assets"
+THREAT_INTEL_TABLE = "siem.threat_intel_iocs"
+COMMON_SERVICE_PORTS = {
+    20: "ftp-data",
+    21: "ftp",
+    22: "ssh",
+    23: "telnet",
+    25: "smtp",
+    53: "dns",
+    80: "http",
+    110: "pop3",
+    123: "ntp",
+    143: "imap",
+    389: "ldap",
+    443: "https",
+    445: "smb",
+    465: "smtps",
+    587: "submission",
+    636: "ldaps",
+    993: "imaps",
+    995: "pop3s",
+    1194: "openvpn",
+    1433: "mssql",
+    1521: "oracle",
+    1723: "pptp",
+    1883: "mqtt",
+    2049: "nfs",
+    3306: "mysql",
+    3389: "rdp",
+    5060: "sip",
+    5432: "postgresql",
+    5900: "vnc",
+    6379: "redis",
+    8006: "x-ui",
+    8080: "http-alt",
+    8443: "https-alt",
+    9000: "clickhouse-native",
+    1514: "syslog-tcp",
+    51820: "wireguard",
+}
 INCIDENT_STATUS_TRANSITIONS = {
     "new": {"triaged", "assigned", "closed", "false_positive"},
     "open": {"triaged", "assigned", "in_progress", "closed", "false_positive"},
@@ -113,6 +173,7 @@ def _event_select_sql(table_name: str) -> str:
 
 
 def _event_view_sql(storage: str = 'hot') -> str:
+    ensure_event_enrichment_support()
     if storage == 'all':
         ensure_cold_storage_support()
         return f"{_event_select_sql('siem.events')} UNION ALL {_event_select_sql(EVENTS_COLD_TABLE)}"
@@ -124,6 +185,72 @@ def _event_view_sql(storage: str = 'hot') -> str:
 
 def _event_source_label_expr(alias: str = "source_name") -> str:
     return f"if(host_name != '' AND host_name != '-', host_name, log_source) AS {alias}"
+
+
+@lru_cache(maxsize=1)
+def ensure_event_enrichment_support() -> bool:
+    for table in ("siem.events", EVENTS_COLD_TABLE):
+        exists = get_ch_client().query(f"EXISTS TABLE {table}").result_rows
+        if not exists or not exists[0][0]:
+            continue
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS event_code String DEFAULT ''")
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS asset_id String DEFAULT ''")
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS asset_owner String DEFAULT ''")
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS asset_criticality String DEFAULT ''")
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS asset_environment String DEFAULT ''")
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS asset_service String DEFAULT ''")
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS ti_indicator String DEFAULT ''")
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS ti_indicator_type String DEFAULT ''")
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS ti_provider String DEFAULT ''")
+        get_ch_client().command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS ti_severity String DEFAULT ''")
+    return True
+
+
+@lru_cache(maxsize=1)
+def ensure_cmdb_ti_support() -> bool:
+    get_ch_client().command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {CMDB_ASSET_TABLE}
+        (
+            asset_id String,
+            asset_type LowCardinality(String) DEFAULT 'server',
+            hostname String DEFAULT '',
+            ip String DEFAULT '',
+            owner String DEFAULT '',
+            criticality LowCardinality(String) DEFAULT 'medium',
+            environment LowCardinality(String) DEFAULT 'prod',
+            business_service String DEFAULT '',
+            os_family LowCardinality(String) DEFAULT '',
+            expected_ports String DEFAULT '',
+            tags String DEFAULT '',
+            notes String DEFAULT '',
+            enabled UInt8 DEFAULT 1,
+            updated_ts DateTime DEFAULT now()
+        )
+        ENGINE = MergeTree
+        ORDER BY (asset_id, hostname, ip)
+        """
+    )
+    get_ch_client().command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {THREAT_INTEL_TABLE}
+        (
+            indicator_type LowCardinality(String),
+            indicator String,
+            provider String DEFAULT '',
+            severity LowCardinality(String) DEFAULT 'medium',
+            confidence UInt8 DEFAULT 50,
+            description String DEFAULT '',
+            tags String DEFAULT '',
+            enabled UInt8 DEFAULT 1,
+            expires_ts Nullable(DateTime),
+            updated_ts DateTime DEFAULT now()
+        )
+        ENGINE = MergeTree
+        ORDER BY (indicator_type, indicator, provider)
+        """
+    )
+    return True
 
 
 @lru_cache(maxsize=1)
@@ -244,11 +371,14 @@ def _sql_quote(value: str) -> str:
 def _search_expr_for_token(token: str) -> str:
     quoted = _sql_quote(token)
     haystack = (
-        "concat(toString(ts), ' ', toString(event_id), ' ', category, ' ', subcategory, ' ', "
+        "concat(toString(ts), ' ', toString(event_id), ' ', toString(event_code), ' ', category, ' ', subcategory, ' ', "
         "event_action, ' ', event_outcome, ' ', "
         "src_ip, ' ', dst_ip, ' ', toString(src_port), ' ', toString(dst_port), ' ', "
-        "device_vendor, ' ', device_product, ' ', log_source, ' ', host_name, ' ', user_name, ' ', "
+        "device_vendor, ' ', device_product, ' ', log_source, ' ', host_name, ' ', "
+        "asset_id, ' ', asset_owner, ' ', asset_criticality, ' ', asset_environment, ' ', asset_service, ' ', "
+        "user_name, ' ', "
         "target_user, ' ', process_name, ' ', process_executable, ' ', process_command, ' ', "
+        "ti_indicator, ' ', ti_indicator_type, ' ', ti_provider, ' ', ti_severity, ' ', "
         "severity, ' ', message, ' ', normalized_json, ' ', tags)"
     )
     return f"positionCaseInsensitiveUTF8({haystack}, {quoted}) > 0"
@@ -323,6 +453,7 @@ def _build_events_base_sql(query_text: str, window: str, storage: str = 'hot') -
         f"SELECT\n"
         f"    ts,\n"
         f"    event_id,\n"
+        f"    event_code,\n"
         f"    category,\n"
         f"    subcategory,\n"
         f"    event_action,\n"
@@ -335,11 +466,20 @@ def _build_events_base_sql(query_text: str, window: str, storage: str = 'hot') -
         f"    device_product,\n"
         f"    log_source,\n"
         f"    host_name,\n"
+        f"    asset_id,\n"
+        f"    asset_owner,\n"
+        f"    asset_criticality,\n"
+        f"    asset_environment,\n"
+        f"    asset_service,\n"
         f"    user_name,\n"
         f"    target_user,\n"
         f"    process_name,\n"
         f"    process_executable,\n"
         f"    process_command,\n"
+        f"    ti_indicator,\n"
+        f"    ti_indicator_type,\n"
+        f"    ti_provider,\n"
+        f"    ti_severity,\n"
         f"    severity,\n"
         f"    message,\n"
         f"    normalized_json,\n"
@@ -715,6 +855,60 @@ def fetch_top_sources(limit: int = 8, hours: int = 24) -> List[Dict[str, Any]]:
     return rows
 
 
+def fetch_top_target_ports(limit: int = 8, hours: int = 24) -> List[Dict[str, Any]]:
+    ensure_event_enrichment_support()
+    query = f"""
+        WITH
+            if(
+                dst_port = 0
+                AND (
+                    device_product = 'linux.sshd'
+                    OR subcategory IN ('ssh_login_success', 'ssh_login_failure', 'ssh_invalid_user', 'linux_root_ssh_login')
+                ),
+                22,
+                dst_port
+            ) AS effective_port,
+            if(src_ip = 0, '', IPv4NumToString(src_ip)) AS source_ip_text
+        SELECT
+            effective_port AS dst_port,
+            count() AS attempts,
+            countDistinct(if(source_ip_text != '', source_ip_text, 'unknown')) AS unique_sources,
+            max(ts) AS last_seen,
+            countIf(category = 'authentication') AS auth_attempts,
+            countIf(subcategory = 'linux_firewall_blocked') AS firewall_hits,
+            arrayStringConcat(groupUniqArray(5)(if(source_ip_text != '', source_ip_text, 'unknown')), ',') AS source_sample
+        FROM siem.events
+        WHERE ts >= now() - INTERVAL {int(hours)} HOUR
+          AND effective_port > 0
+          AND (
+                subcategory = 'linux_firewall_blocked'
+                OR device_product = 'linux.sshd'
+                OR subcategory IN ('ssh_login_success', 'ssh_login_failure', 'ssh_invalid_user', 'linux_root_ssh_login', 'audit_user_login_failure', 'audit_user_err')
+          )
+        GROUP BY effective_port
+        ORDER BY attempts DESC
+        LIMIT {int(limit)}
+    """
+    rows: List[Dict[str, Any]] = []
+    for row in get_ch_client().query(query).named_results():
+        port_value = int(row["dst_port"] or 0)
+        auth_attempts = int(row["auth_attempts"] or 0)
+        firewall_hits = int(row["firewall_hits"] or 0)
+        signal = "password spray / auth probing" if auth_attempts else "network scan / blocked probe" if firewall_hits else "service connection attempts"
+        rows.append(
+            {
+                "dst_port": port_value,
+                "service": COMMON_SERVICE_PORTS.get(port_value, "custom"),
+                "attempts": int(row["attempts"] or 0),
+                "unique_sources": int(row["unique_sources"] or 0),
+                "last_seen": _fmt(row["last_seen"]),
+                "signal": signal,
+                "source_sample": [part for part in str(row["source_sample"] or "").split(",") if part],
+            }
+        )
+    return rows
+
+
 def fetch_top_categories(limit: int = 8, hours: int = 24) -> List[Dict[str, Any]]:
     query = f"""
         SELECT category, count() AS events
@@ -731,6 +925,8 @@ def fetch_top_categories(limit: int = 8, hours: int = 24) -> List[Dict[str, Any]
 
 
 def fetch_dashboard_metrics() -> Dict[str, Any]:
+    ensure_event_enrichment_support()
+    ensure_cmdb_ti_support()
     open_incidents_24h_query = f"""
         SELECT count()
         FROM (
@@ -750,6 +946,8 @@ def fetch_dashboard_metrics() -> Dict[str, Any]:
         'critical_events_24h': int(_scalar("SELECT count() FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR AND lower(severity) = 'critical'")),
         'active_sources_24h': int(_scalar(f"SELECT countDistinct(if(host_name != '' AND host_name != '-', host_name, log_source)) FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR")),
         'audit_events_24h': int(_scalar("SELECT count() FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR AND message LIKE '%auditd:%'")),
+        'ti_hits_24h': int(_scalar("SELECT count() FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR AND ti_indicator != ''")),
+        'critical_assets_observed_24h': int(_scalar("SELECT countDistinct(asset_id) FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR AND lower(asset_criticality) IN ('high', 'critical') AND asset_id != ''")),
     }
 
 
@@ -787,7 +985,21 @@ def fetch_recent_alerts(limit: int = 10) -> List[Dict[str, Any]]:
     return fetch_alerts_raw(limit=limit)
 
 
+def _cmdb_asset_indexes() -> tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    host_index: Dict[str, Dict[str, Any]] = {}
+    ip_index: Dict[str, Dict[str, Any]] = {}
+    for item in fetch_cmdb_assets(limit=1000):
+        hostname = str(item.get("hostname") or "").strip().lower()
+        ip_value = str(item.get("ip") or "").strip()
+        if hostname:
+            host_index[hostname] = item
+        if ip_value:
+            ip_index[ip_value] = item
+    return host_index, ip_index
+
+
 def fetch_assets(limit: int = 50, hours: int = 24) -> List[Dict[str, Any]]:
+    ensure_cmdb_ti_support()
     query = f"""
         SELECT
             {_event_source_label_expr('log_source')},
@@ -804,16 +1016,26 @@ def fetch_assets(limit: int = 50, hours: int = 24) -> List[Dict[str, Any]]:
         LIMIT {int(limit)}
     """
     rows: List[Dict[str, Any]] = []
+    host_index, ip_index = _cmdb_asset_indexes()
     for row in get_ch_client().query(query).named_results():
+        asset_name = row['log_source'] or 'unknown'
+        cmdb = host_index.get(str(asset_name).strip().lower()) or ip_index.get(str(asset_name).strip())
         rows.append(
             {
-                'asset': row['log_source'] or 'unknown',
+                'asset': asset_name,
                 'events': int(row['events']),
                 'last_seen': _fmt(row['last_seen']),
                 'notable_events': int(row['notable_events']),
                 'audit_events': int(row['audit_events']),
                 'categories': [str(item) for item in row['categories']],
                 'products': [str(item) for item in row['products']],
+                'cmdb_asset_id': str((cmdb or {}).get('asset_id') or ''),
+                'cmdb_owner': str((cmdb or {}).get('owner') or ''),
+                'cmdb_criticality': str((cmdb or {}).get('criticality') or ''),
+                'cmdb_environment': str((cmdb or {}).get('environment') or ''),
+                'cmdb_service': str((cmdb or {}).get('business_service') or ''),
+                'cmdb_tags': list((cmdb or {}).get('tags') or []),
+                'cmdb_expected_ports': list((cmdb or {}).get('expected_ports') or []),
             }
         )
     return rows
@@ -851,6 +1073,7 @@ def fetch_resource_overview() -> Dict[str, Any]:
     ensure_incident_workflow_support()
     ensure_active_list_support()
     ensure_cold_storage_support()
+    ensure_cmdb_ti_support()
     return {
         'clickhouse_ok': ch_ping(),
         'events_total': int(_scalar("SELECT count() FROM siem.events")) + int(_scalar(f"SELECT count() FROM {EVENTS_COLD_TABLE}")),
@@ -863,6 +1086,8 @@ def fetch_resource_overview() -> Dict[str, Any]:
         'stream_rules': int(_scalar("SELECT count() FROM siem.correlation_rules_stream WHERE enabled = 1")),
         'detection_rules': int(_scalar(f"SELECT count() FROM {DETECTION_RULE_TABLE}")),
         'active_list_items': int(_scalar(f"SELECT count() FROM {ACTIVE_LIST_TABLE}")),
+        'cmdb_assets': int(_scalar(f"SELECT count() FROM {CMDB_ASSET_TABLE} WHERE enabled = 1")),
+        'threat_iocs': int(_scalar(f"SELECT count() FROM {THREAT_INTEL_TABLE} WHERE enabled = 1")),
         'incident_history_rows': int(_scalar(f"SELECT count() FROM {ALERT_HISTORY_TABLE}")),
         'last_event_ts': _fmt(_scalar("SELECT max(ts) FROM siem.events")),
         'hot_retention_hours': int(CONFIG.hot_retention_hours),
@@ -871,12 +1096,14 @@ def fetch_resource_overview() -> Dict[str, Any]:
 
 
 def ensure_cold_storage_support() -> None:
+    ensure_event_enrichment_support()
     get_ch_client().command(
         f"""
         CREATE TABLE IF NOT EXISTS {EVENTS_COLD_TABLE}
         (
             ts DateTime,
             event_id String,
+            event_code String DEFAULT '',
             category String,
             subcategory String,
             event_action String DEFAULT '',
@@ -889,11 +1116,20 @@ def ensure_cold_storage_support() -> None:
             device_product String,
             log_source String,
             host_name String DEFAULT '',
+            asset_id String DEFAULT '',
+            asset_owner String DEFAULT '',
+            asset_criticality String DEFAULT '',
+            asset_environment String DEFAULT '',
+            asset_service String DEFAULT '',
             user_name String DEFAULT '',
             target_user String DEFAULT '',
             process_name String DEFAULT '',
             process_executable String DEFAULT '',
             process_command String DEFAULT '',
+            ti_indicator String DEFAULT '',
+            ti_indicator_type String DEFAULT '',
+            ti_provider String DEFAULT '',
+            ti_severity String DEFAULT '',
             severity String,
             message String,
             normalized_json String DEFAULT '',
@@ -1024,6 +1260,212 @@ def save_active_list_item(
         "item_value": safe_item_value,
         "item_label": safe_item_label,
         "tags": safe_tags,
+    }
+
+
+def _normalize_csv(value: str) -> str:
+    return ",".join(part.strip() for part in str(value or "").split(",") if part.strip())
+
+
+def fetch_cmdb_assets(limit: int = 200) -> List[Dict[str, Any]]:
+    ensure_cmdb_ti_support()
+    query = f"""
+        SELECT
+            asset_id,
+            asset_type,
+            hostname,
+            ip,
+            owner,
+            criticality,
+            environment,
+            business_service,
+            os_family,
+            expected_ports,
+            tags,
+            notes,
+            enabled,
+            updated_ts
+        FROM {CMDB_ASSET_TABLE}
+        ORDER BY updated_ts DESC, asset_id
+        LIMIT {int(limit)}
+    """
+    rows: List[Dict[str, Any]] = []
+    for row in get_ch_client().query(query).named_results():
+        rows.append(
+            {
+                "asset_id": str(row["asset_id"] or ""),
+                "asset_type": str(row["asset_type"] or ""),
+                "hostname": str(row["hostname"] or ""),
+                "ip": str(row["ip"] or ""),
+                "owner": str(row["owner"] or ""),
+                "criticality": str(row["criticality"] or ""),
+                "environment": str(row["environment"] or ""),
+                "business_service": str(row["business_service"] or ""),
+                "os_family": str(row["os_family"] or ""),
+                "expected_ports": [part for part in str(row["expected_ports"] or "").split(",") if part],
+                "tags": [part for part in str(row["tags"] or "").split(",") if part],
+                "notes": str(row["notes"] or ""),
+                "enabled": bool(row["enabled"]),
+                "updated_ts": _fmt(row["updated_ts"]),
+            }
+        )
+    return rows
+
+
+def save_cmdb_asset(
+    *,
+    asset_id: str,
+    asset_type: str,
+    hostname: str,
+    ip: str,
+    owner: str,
+    criticality: str,
+    environment: str,
+    business_service: str,
+    os_family: str,
+    expected_ports: str,
+    tags: str,
+    notes: str,
+) -> Dict[str, Any]:
+    ensure_cmdb_ti_support()
+    safe_asset_id = (asset_id or "").strip()
+    safe_asset_type = (asset_type or "server").strip().lower()
+    safe_hostname = (hostname or "").strip().lower()
+    safe_ip = (ip or "").strip()
+    safe_owner = (owner or "").strip()
+    safe_criticality = (criticality or "medium").strip().lower()
+    safe_environment = (environment or "prod").strip().lower()
+    safe_business_service = (business_service or "").strip()
+    safe_os_family = (os_family or "").strip().lower()
+    safe_expected_ports = _normalize_csv(expected_ports)
+    safe_tags = _normalize_csv(tags)
+    safe_notes = (notes or "").strip()
+    if not safe_asset_id:
+        raise ValueError("asset_id is required")
+    if safe_criticality not in {"low", "medium", "high", "critical"}:
+        raise ValueError("criticality must be low, medium, high or critical")
+    get_ch_client().command(f"ALTER TABLE {CMDB_ASSET_TABLE} DELETE WHERE asset_id = {_sql_quote(safe_asset_id)}")
+    get_ch_client().insert(
+        CMDB_ASSET_TABLE,
+        [[
+            safe_asset_id,
+            safe_asset_type,
+            safe_hostname,
+            safe_ip,
+            safe_owner,
+            safe_criticality,
+            safe_environment,
+            safe_business_service,
+            safe_os_family,
+            safe_expected_ports,
+            safe_tags,
+            safe_notes,
+            1,
+        ]],
+        column_names=[
+            "asset_id",
+            "asset_type",
+            "hostname",
+            "ip",
+            "owner",
+            "criticality",
+            "environment",
+            "business_service",
+            "os_family",
+            "expected_ports",
+            "tags",
+            "notes",
+            "enabled",
+        ],
+    )
+    return {
+        "asset_id": safe_asset_id,
+        "hostname": safe_hostname,
+        "ip": safe_ip,
+        "criticality": safe_criticality,
+        "environment": safe_environment,
+    }
+
+
+def fetch_threat_intel_entries(limit: int = 200) -> List[Dict[str, Any]]:
+    ensure_cmdb_ti_support()
+    query = f"""
+        SELECT
+            indicator_type,
+            indicator,
+            provider,
+            severity,
+            confidence,
+            description,
+            tags,
+            enabled,
+            expires_ts,
+            updated_ts
+        FROM {THREAT_INTEL_TABLE}
+        ORDER BY updated_ts DESC, indicator_type, indicator
+        LIMIT {int(limit)}
+    """
+    rows: List[Dict[str, Any]] = []
+    for row in get_ch_client().query(query).named_results():
+        rows.append(
+            {
+                "indicator_type": str(row["indicator_type"] or ""),
+                "indicator": str(row["indicator"] or ""),
+                "provider": str(row["provider"] or ""),
+                "severity": str(row["severity"] or ""),
+                "confidence": int(row["confidence"] or 0),
+                "description": str(row["description"] or ""),
+                "tags": [part for part in str(row["tags"] or "").split(",") if part],
+                "enabled": bool(row["enabled"]),
+                "expires_ts": _fmt(row["expires_ts"]),
+                "updated_ts": _fmt(row["updated_ts"]),
+            }
+        )
+    return rows
+
+
+def save_threat_intel_indicator(
+    *,
+    indicator_type: str,
+    indicator: str,
+    provider: str,
+    severity: str,
+    confidence: int,
+    description: str,
+    tags: str,
+) -> Dict[str, Any]:
+    ensure_cmdb_ti_support()
+    safe_indicator_type = (indicator_type or "").strip().lower()
+    safe_indicator = (indicator or "").strip().lower()
+    safe_provider = (provider or "").strip()
+    safe_severity = (severity or "medium").strip().lower()
+    safe_confidence = max(0, min(100, int(confidence or 0)))
+    safe_description = (description or "").strip()
+    safe_tags = _normalize_csv(tags)
+    if safe_indicator_type not in {"ip", "host", "user", "process", "raw"}:
+        raise ValueError("indicator_type must be ip, host, user, process or raw")
+    if not safe_indicator:
+        raise ValueError("indicator is required")
+    get_ch_client().command(
+        f"""
+        ALTER TABLE {THREAT_INTEL_TABLE}
+        DELETE WHERE
+            indicator_type = {_sql_quote(safe_indicator_type)}
+            AND indicator = {_sql_quote(safe_indicator)}
+            AND provider = {_sql_quote(safe_provider)}
+        """
+    )
+    get_ch_client().insert(
+        THREAT_INTEL_TABLE,
+        [[safe_indicator_type, safe_indicator, safe_provider, safe_severity, safe_confidence, safe_description, safe_tags, 1]],
+        column_names=["indicator_type", "indicator", "provider", "severity", "confidence", "description", "tags", "enabled"],
+    )
+    return {
+        "indicator_type": safe_indicator_type,
+        "indicator": safe_indicator,
+        "provider": safe_provider,
+        "severity": safe_severity,
+        "confidence": safe_confidence,
     }
 
 
@@ -1972,6 +2414,156 @@ tags:
   - attack.t1082
 """.strip(),
     },
+    {
+        "id": 1030,
+        "title": "Windows Logon Failure Burst",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 5,
+        "entity_field": "source.ip",
+        "yaml": """
+title: Windows Logon Failure Burst
+id: sigma-windows-logon-failure-burst
+status: experimental
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    event.provider: windows.security
+    event.type: windows_logon_failure
+  condition: selection
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1110
+""".strip(),
+    },
+    {
+        "id": 1031,
+        "title": "Windows Audit Log Cleared",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Windows Audit Log Cleared
+id: sigma-windows-audit-log-cleared
+status: experimental
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    event.provider: windows.security
+    event.type: windows_audit_log_cleared
+  condition: selection
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1070
+""".strip(),
+    },
+    {
+        "id": 1032,
+        "title": "Windows Privileged Group Membership Changed",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "user.target.name",
+        "yaml": """
+title: Windows Privileged Group Membership Changed
+id: sigma-windows-privileged-group-membership-changed
+status: experimental
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    event.provider: windows.security
+    event.type: windows_user_added_to_privileged_group
+  condition: selection
+level: high
+tags:
+  - attack.persistence
+  - attack.t1098
+""".strip(),
+    },
+    {
+        "id": 1033,
+        "title": "Windows Suspicious PowerShell Encoded Command",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Windows Suspicious PowerShell Encoded Command
+id: sigma-windows-powershell-encoded-command
+status: experimental
+logsource:
+  product: windows
+  service: powershell
+detection:
+  selection:
+    event.provider: windows.powershell
+    event.type: windows_powershell_encoded_command
+  condition: selection
+level: high
+tags:
+  - attack.execution
+  - attack.t1059.001
+""".strip(),
+    },
+    {
+        "id": 1034,
+        "title": "Windows Service Installed",
+        "level": "high",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "log_source",
+        "yaml": """
+title: Windows Service Installed
+id: sigma-windows-service-installed
+status: experimental
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    event.provider: windows.security
+    event.type: windows_service_installed
+  condition: selection
+level: high
+tags:
+  - attack.persistence
+  - attack.t1543
+""".strip(),
+    },
+    {
+        "id": 1035,
+        "title": "Windows User Created",
+        "level": "medium",
+        "window_s": 300,
+        "threshold": 1,
+        "entity_field": "user.target.name",
+        "yaml": """
+title: Windows User Created
+id: sigma-windows-user-created
+status: experimental
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    event.provider: windows.security
+    event.type: windows_user_created
+  condition: selection
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1136
+""".strip(),
+    },
 ]
 
 
@@ -2018,6 +2610,8 @@ def _map_sigma_field(field_name: str, *, target: str = "stream") -> tuple[str, s
         field_map = {
             "message": ("message", "contains"),
             "event.original": ("message", "contains"),
+            "event.code": ("event_code", "eq"),
+            "winlog.event_id": ("event_code", "eq"),
             "event.provider": ("device_product", "eq"),
             "event.category": ("category", "eq"),
             "event.type": ("subcategory", "eq"),
@@ -2028,10 +2622,21 @@ def _map_sigma_field(field_name: str, *, target: str = "stream") -> tuple[str, s
             "severity": ("severity", "eq"),
             "sourceip": ("src_ip", "eq"),
             "source.ip": ("src_ip", "eq"),
+            "source.port": ("src_port", "eq"),
             "clientaddress": ("src_ip", "eq"),
             "ipaddress": ("src_ip", "eq"),
+            "destination.port": ("dst_port", "eq"),
+            "destport": ("dst_port", "eq"),
             "host": ("log_source", "eq"),
             "host.name": ("host_name", "eq"),
+            "asset.id": ("asset_id", "eq"),
+            "asset.owner": ("asset_owner", "contains"),
+            "asset.criticality": ("asset_criticality", "eq"),
+            "asset.environment": ("asset_environment", "eq"),
+            "asset.service": ("asset_service", "contains"),
+            "threat.indicator": ("ti_indicator", "contains"),
+            "threat.provider": ("ti_provider", "contains"),
+            "threat.severity": ("ti_severity", "eq"),
             "user": ("user_name", "contains"),
             "username": ("user_name", "contains"),
             "accountname": ("user_name", "contains"),
@@ -2051,11 +2656,15 @@ def _map_sigma_field(field_name: str, *, target: str = "stream") -> tuple[str, s
         field_map = {
             "message": "event.original",
             "event.original": "event.original",
+            "event.code": "event.code",
+            "winlog.event_id": "event.code",
             "event.provider": "event.provider",
             "event.category": "event.category",
             "event.type": "event.type",
             "event.action": "event.action",
             "event.outcome": "event.outcome",
+            "source.port": "source.port",
+            "destination.port": "destination.port",
             "commandline": "process.command_line",
             "process.command_line": "process.command_line",
             "image": "process.executable",
@@ -2489,11 +3098,17 @@ def test_detection_rule(rule_id: int) -> Dict[str, Any]:
 def fetch_asset_categories() -> List[Dict[str, Any]]:
     ensure_detection_support_tables()
     ensure_active_list_support()
+    ensure_cmdb_ti_support()
     return [
         {
             "name": "Devices",
             "count": int(_scalar("SELECT countDistinct(if(host_name != '' AND host_name != '-', host_name, log_source)) FROM siem.events WHERE ts >= now() - INTERVAL 24 HOUR")),
             "description": "Observed hosts and sources active during the last 24 hours.",
+        },
+        {
+            "name": "CMDB Assets",
+            "count": int(_scalar(f"SELECT count() FROM {CMDB_ASSET_TABLE} WHERE enabled = 1")),
+            "description": "Asset registry with owners, criticality, environment and expected services.",
         },
         {
             "name": "Detection Rules",
@@ -2517,7 +3132,12 @@ def fetch_asset_categories() -> List[Dict[str, Any]]:
         },
         {
             "name": "Threat Feeds",
-            "count": 0,
-            "description": "Reserved category for TI/CyberTrace and external feed connectors.",
+            "count": int(_scalar(f"SELECT count() FROM {THREAT_INTEL_TABLE} WHERE enabled = 1")),
+            "description": "Threat intel indicators used to enrich events and drive high-priority detections.",
+        },
+        {
+            "name": "Windows Content",
+            "count": int(_scalar(f"SELECT count() FROM {DETECTION_RULE_TABLE} WHERE lower(logsource_product) = 'windows'")),
+            "description": "Windows normalization and Sigma-backed detection foundations for Security and Sysmon telemetry.",
         },
     ]

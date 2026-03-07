@@ -13,6 +13,7 @@ from ..deps import (
     fetch_active_list_items,
     fetch_asset_categories,
     fetch_assets,
+    fetch_cmdb_assets,
     fetch_dashboard_metrics,
     fetch_detection_rules,
     fetch_events_timeseries,
@@ -20,13 +21,17 @@ from ..deps import (
     fetch_recent_alerts,
     fetch_resource_overview,
     fetch_severity_breakdown,
+    fetch_threat_intel_entries,
+    fetch_top_target_ports,
     save_active_list_item,
+    save_cmdb_asset,
     save_sigma_rule,
+    save_threat_intel_indicator,
     test_detection_rule,
     fetch_top_categories,
     fetch_top_sources,
 )
-from ..security import require_roles
+from ..security import require_permissions
 from ..templates import templates
 
 router = APIRouter()
@@ -70,6 +75,8 @@ def _render_assets_page(
     detection_rules = []
     normalizer_rules = []
     active_list_items = []
+    cmdb_assets = []
+    threat_intel_entries = []
     load_error = error
     try:
         assets = fetch_assets(limit=50, hours=24)
@@ -77,6 +84,8 @@ def _render_assets_page(
         detection_rules = fetch_detection_rules(limit=200)
         normalizer_rules = fetch_normalizer_rules(limit=120)
         active_list_items = fetch_active_list_items(limit=200)
+        cmdb_assets = fetch_cmdb_assets(limit=200)
+        threat_intel_entries = fetch_threat_intel_entries(limit=200)
     except Exception as exc:  # noqa: BLE001
         load_error = load_error or f'Unable to load assets and detection catalog: {exc!s}'
     draft = {
@@ -98,6 +107,8 @@ def _render_assets_page(
             'detection_rules': detection_rules,
             'normalizer_rules': normalizer_rules,
             'active_list_items': active_list_items,
+            'cmdb_assets': cmdb_assets,
+            'threat_intel_entries': threat_intel_entries,
             'entity_fields': RULE_ENTITY_FIELDS,
             'rule_form': draft,
             'error': load_error,
@@ -123,6 +134,7 @@ async def dashboard_page(request: Request, user=Depends(get_current_user)) -> HT
         'alert_severity_breakdown': [],
         'alert_status_breakdown': [],
         'top_sources': [],
+        'top_target_ports': [],
         'top_categories': [],
         'recent_alerts': [],
         'error': None,
@@ -134,6 +146,7 @@ async def dashboard_page(request: Request, user=Depends(get_current_user)) -> HT
         context['alert_severity_breakdown'] = fetch_alert_severity_breakdown(hours=24)
         context['alert_status_breakdown'] = fetch_alert_status_breakdown(hours=24)
         context['top_sources'] = fetch_top_sources(limit=8, hours=24)
+        context['top_target_ports'] = fetch_top_target_ports(limit=10, hours=24)
         context['top_categories'] = fetch_top_categories(limit=8, hours=24)
         context['recent_alerts'] = fetch_recent_alerts(limit=10)
     except Exception as exc:  # noqa: BLE001
@@ -160,7 +173,7 @@ async def create_sigma_rule(
     threshold: int = Form(1),
     window_s: int = Form(300),
     entity_field: str = Form('log_source'),
-    user=Depends(require_roles('admin')),
+    user=Depends(require_permissions('rules:write')),
 ) -> HTMLResponse:
     try:
         rule = save_sigma_rule(
@@ -197,7 +210,7 @@ async def create_active_list_item(
     item_value: str = Form(...),
     item_label: str = Form(''),
     tags: str = Form(''),
-    user=Depends(require_roles('admin')),
+    user=Depends(require_permissions('active_lists:write')),
 ) -> HTMLResponse:
     try:
         item = save_active_list_item(
@@ -217,8 +230,72 @@ async def create_active_list_item(
     )
 
 
+@router.post('/assets/cmdb', response_class=HTMLResponse)
+async def create_cmdb_asset(
+    request: Request,
+    asset_id: str = Form(...),
+    asset_type: str = Form('server'),
+    hostname: str = Form(''),
+    ip: str = Form(''),
+    owner: str = Form(''),
+    criticality: str = Form('medium'),
+    environment: str = Form('prod'),
+    business_service: str = Form(''),
+    os_family: str = Form(''),
+    expected_ports: str = Form(''),
+    tags: str = Form(''),
+    notes: str = Form(''),
+    user=Depends(require_permissions('cmdb:write')),
+) -> HTMLResponse:
+    try:
+        item = save_cmdb_asset(
+            asset_id=asset_id,
+            asset_type=asset_type,
+            hostname=hostname,
+            ip=ip,
+            owner=owner,
+            criticality=criticality,
+            environment=environment,
+            business_service=business_service,
+            os_family=os_family,
+            expected_ports=expected_ports,
+            tags=tags,
+            notes=notes,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _render_assets_page(request, user, error=f'Unable to save CMDB asset: {exc!s}')
+    return _render_assets_page(request, user, status=f"CMDB asset saved: {item['asset_id']}")
+
+
+@router.post('/assets/threat-intel', response_class=HTMLResponse)
+async def create_threat_intel_item(
+    request: Request,
+    indicator_type: str = Form(...),
+    indicator: str = Form(...),
+    provider: str = Form(''),
+    severity: str = Form('medium'),
+    confidence: int = Form(50),
+    description: str = Form(''),
+    tags: str = Form(''),
+    user=Depends(require_permissions('threat_intel:write')),
+) -> HTMLResponse:
+    try:
+        item = save_threat_intel_indicator(
+            indicator_type=indicator_type,
+            indicator=indicator,
+            provider=provider,
+            severity=severity,
+            confidence=confidence,
+            description=description,
+            tags=tags,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _render_assets_page(request, user, error=f'Unable to save threat intel indicator: {exc!s}')
+    return _render_assets_page(request, user, status=f"Threat intel indicator saved: {item['indicator_type']} / {item['indicator']}")
+
+
 @router.post('/api/rules/{rule_id}/test', response_class=JSONResponse)
-async def test_rule_api(rule_id: int, user=Depends(require_roles('admin', 'analyst'))) -> JSONResponse:
+async def test_rule_api(rule_id: int, user=Depends(require_permissions('rules:test'))) -> JSONResponse:
     try:
         return JSONResponse(test_detection_rule(rule_id))
     except Exception as exc:  # noqa: BLE001
@@ -228,7 +305,7 @@ async def test_rule_api(rule_id: int, user=Depends(require_roles('admin', 'analy
 @router.post('/api/resources/archive-hot', response_class=JSONResponse)
 async def archive_hot_events_api(
     payload: dict = Body(default={}),
-    user=Depends(require_roles('admin')),
+    user=Depends(require_permissions('storage:archive')),
 ) -> JSONResponse:
     hours = int(payload.get('older_than_hours', CONFIG.hot_retention_hours) or CONFIG.hot_retention_hours)
     try:

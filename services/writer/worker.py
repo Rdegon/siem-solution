@@ -38,6 +38,9 @@ class WriterSettings:
     events_table: str = os.getenv("SIEM_EVENTS_TABLE", "siem.events")
     active_list_table: str = os.getenv("SIEM_ACTIVE_LIST_TABLE", "siem.active_list_items")
     active_list_refresh_secs: int = int(os.getenv("SIEM_ACTIVE_LIST_REFRESH_SECS", "60"))
+    cmdb_table: str = os.getenv("SIEM_CMDB_TABLE", "siem.cmdb_assets")
+    threat_intel_table: str = os.getenv("SIEM_THREAT_INTEL_TABLE", "siem.threat_intel_iocs")
+    enrichment_refresh_secs: int = int(os.getenv("SIEM_ENRICHMENT_REFRESH_SECS", "60"))
 
 
 def ipv4_to_int(ip: str | None) -> int:
@@ -56,6 +59,11 @@ class WriterWorker:
         self._ch: Client | None = None
         self._active_lists: Dict[str, Dict[str, Dict[str, str]]] = {}
         self._active_lists_loaded_at: datetime | None = None
+        self._cmdb_by_host: Dict[str, Dict[str, str]] = {}
+        self._cmdb_by_ip: Dict[str, Dict[str, str]] = {}
+        self._threat_intel: Dict[str, Dict[str, List[Dict[str, str]]]] = {}
+        self._threat_intel_raw: List[tuple[str, Dict[str, str]]] = []
+        self._enrichment_loaded_at: datetime | None = None
 
     async def init(self) -> None:
         self._redis = Redis(
@@ -87,6 +95,7 @@ class WriterWorker:
                 raise
 
         self._refresh_active_lists(force=True)
+        self._refresh_enrichment_cache(force=True)
         logger.info(
             "WriterWorker initialized",
             extra={
@@ -149,11 +158,18 @@ class WriterWorker:
             tags.append(tag)
         return tags
 
-    def _build_normalized_json(self, fields: Dict[str, str], active_list_matches: List[Dict[str, str]] | None = None) -> str:
+    def _build_normalized_json(
+        self,
+        fields: Dict[str, str],
+        active_list_matches: List[Dict[str, str]] | None = None,
+        cmdb_asset: Dict[str, str] | None = None,
+        threat_intel_matches: List[Dict[str, str]] | None = None,
+    ) -> str:
         payload = {
             "provider": fields.get("event.provider", ""),
             "category": fields.get("event.category", ""),
             "type": fields.get("event.type", ""),
+            "code": fields.get("event.code", ""),
             "action": fields.get("event.action", ""),
             "outcome": fields.get("event.outcome", ""),
             "host": fields.get("host.name", ""),
@@ -176,6 +192,8 @@ class WriterWorker:
             },
             "enrichment": {
                 "active_lists": active_list_matches or [],
+                "cmdb": cmdb_asset or {},
+                "threat_intel": threat_intel_matches or [],
             },
             "message": fields.get("event.original") or fields.get("message") or "",
         }
@@ -215,6 +233,145 @@ class WriterWorker:
             }
         self._active_lists = active_lists
         self._active_lists_loaded_at = now
+
+    def _refresh_enrichment_cache(self, *, force: bool = False) -> None:
+        assert self._ch is not None
+        now = datetime.now(timezone.utc)
+        if not force and self._enrichment_loaded_at is not None:
+            age = (now - self._enrichment_loaded_at).total_seconds()
+            if age < self._settings.enrichment_refresh_secs:
+                return
+
+        cmdb_by_host: Dict[str, Dict[str, str]] = {}
+        cmdb_by_ip: Dict[str, Dict[str, str]] = {}
+        threat_intel: Dict[str, Dict[str, List[Dict[str, str]]]] = {}
+        threat_intel_raw: List[tuple[str, Dict[str, str]]] = []
+
+        try:
+            exists = self._ch.execute(f"EXISTS TABLE {self._settings.cmdb_table}")
+            if exists and exists[0][0]:
+                rows = self._ch.execute(
+                    f"""
+                    SELECT asset_id, asset_type, hostname, ip, owner, criticality, environment, business_service, os_family, expected_ports, tags
+                    FROM {self._settings.cmdb_table}
+                    WHERE enabled = 1
+                    """
+                )
+                for asset_id, asset_type, hostname, ip_value, owner, criticality, environment, business_service, os_family, expected_ports, tags in rows:
+                    item = {
+                        "asset_id": str(asset_id or "").strip(),
+                        "asset_type": str(asset_type or "").strip(),
+                        "hostname": str(hostname or "").strip().lower(),
+                        "ip": str(ip_value or "").strip(),
+                        "owner": str(owner or "").strip(),
+                        "criticality": str(criticality or "").strip().lower(),
+                        "environment": str(environment or "").strip().lower(),
+                        "business_service": str(business_service or "").strip(),
+                        "os_family": str(os_family or "").strip().lower(),
+                        "expected_ports": str(expected_ports or "").strip(),
+                        "tags": str(tags or "").strip(),
+                    }
+                    if item["hostname"]:
+                        cmdb_by_host[item["hostname"]] = item
+                    if item["ip"]:
+                        cmdb_by_ip[item["ip"]] = item
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to refresh CMDB cache", extra={"extra": {"error": str(exc)}})
+
+        try:
+            exists = self._ch.execute(f"EXISTS TABLE {self._settings.threat_intel_table}")
+            if exists and exists[0][0]:
+                rows = self._ch.execute(
+                    f"""
+                    SELECT indicator_type, indicator, provider, severity, confidence, description, tags
+                    FROM {self._settings.threat_intel_table}
+                    WHERE enabled = 1
+                      AND (expires_ts IS NULL OR expires_ts >= now())
+                    """
+                )
+                for indicator_type, indicator, provider, severity, confidence, description, tags in rows:
+                    item = {
+                        "indicator_type": str(indicator_type or "").strip().lower(),
+                        "indicator": str(indicator or "").strip().lower(),
+                        "provider": str(provider or "").strip(),
+                        "severity": str(severity or "").strip().lower(),
+                        "confidence": str(confidence or "").strip(),
+                        "description": str(description or "").strip(),
+                        "tags": str(tags or "").strip(),
+                    }
+                    if item["indicator_type"] == "raw":
+                        threat_intel_raw.append((item["indicator"], item))
+                        continue
+                    threat_intel.setdefault(item["indicator_type"], {}).setdefault(item["indicator"], []).append(item)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to refresh threat intel cache", extra={"extra": {"error": str(exc)}})
+
+        self._cmdb_by_host = cmdb_by_host
+        self._cmdb_by_ip = cmdb_by_ip
+        self._threat_intel = threat_intel
+        self._threat_intel_raw = threat_intel_raw
+        self._enrichment_loaded_at = now
+
+    def _match_cmdb_asset(self, fields: Dict[str, str]) -> Dict[str, str] | None:
+        self._refresh_enrichment_cache()
+        host_candidates = [
+            str(fields.get("host.name", "") or "").strip().lower(),
+            str(fields.get("log_source", "") or "").strip().lower(),
+        ]
+        for candidate in host_candidates:
+            if candidate and candidate in self._cmdb_by_host:
+                return dict(self._cmdb_by_host[candidate])
+        ip_candidates = [
+            str(fields.get("source.ip", "") or "").strip(),
+            str(fields.get("destination.ip", "") or "").strip(),
+            str(fields.get("log_source", "") or "").strip(),
+        ]
+        for candidate in ip_candidates:
+            if candidate and candidate in self._cmdb_by_ip:
+                return dict(self._cmdb_by_ip[candidate])
+        return None
+
+    def _match_threat_intel(self, fields: Dict[str, str]) -> Tuple[List[str], List[Dict[str, str]]]:
+        self._refresh_enrichment_cache()
+        candidates = {
+            "ip": [fields.get("source.ip", ""), fields.get("destination.ip", "")],
+            "host": [fields.get("host.name", ""), fields.get("log_source", "")],
+            "user": [fields.get("user.name", ""), fields.get("user.target.name", "")],
+            "process": [fields.get("process.name", ""), fields.get("process.executable", "")],
+        }
+        tags: List[str] = []
+        seen: set[str] = set()
+        matches: List[Dict[str, str]] = []
+        match_seen: set[tuple[str, str, str]] = set()
+        for indicator_type, values in candidates.items():
+            bucket = self._threat_intel.get(indicator_type, {})
+            if not bucket:
+                continue
+            for value in values:
+                normalized = str(value or "").strip().lower()
+                if not normalized:
+                    continue
+                for match in bucket.get(normalized, []):
+                    key = (match["indicator_type"], match["indicator"], match["provider"])
+                    if key not in match_seen:
+                        match_seen.add(key)
+                        matches.append(dict(match))
+                    for tag in [f"ti:{match['provider'] or 'feed'}", f"ti_severity:{match['severity']}", *self._normalize_tags(match.get("tags", ""))]:
+                        if tag and tag not in seen:
+                            seen.add(tag)
+                            tags.append(tag)
+        raw_haystack = str(fields.get("event.original", "") or fields.get("message", "")).lower()
+        for indicator, match in self._threat_intel_raw:
+            if indicator and indicator in raw_haystack:
+                key = (match["indicator_type"], match["indicator"], match["provider"])
+                if key not in match_seen:
+                    match_seen.add(key)
+                    matches.append(dict(match))
+                for tag in [f"ti:{match['provider'] or 'feed'}", f"ti_severity:{match['severity']}", *self._normalize_tags(match.get("tags", ""))]:
+                    if tag and tag not in seen:
+                        seen.add(tag)
+                        tags.append(tag)
+        return tags, matches
 
     def _match_active_lists(self, fields: Dict[str, str]) -> Tuple[List[str], List[Dict[str, str]]]:
         self._refresh_active_lists()
@@ -281,6 +438,7 @@ class WriterWorker:
     def _build_row(self, msg_id: str, fields: Dict[str, str]) -> Tuple[Any, ...]:
         ts = self._parse_event_ts(fields)
         event_id = fields.get("event_id") or msg_id
+        event_code = fields.get("event.code") or fields.get("winlog.event_id") or fields.get("audit.type") or ""
         provider = fields.get("event.provider", "")
         category = fields.get("event.category") or provider or "generic"
         subcategory = fields.get("event.type") or ""
@@ -303,18 +461,34 @@ class WriterWorker:
         process_command = fields.get("process.command_line") or fields.get("process.command") or ""
         severity = fields.get("event.severity") or fields.get("severity") or fields.get("log.level") or "info"
         message = fields.get("event.original") or fields.get("message") or ""
+        cmdb_asset = self._match_cmdb_asset(fields) or {}
+        threat_intel_tags, threat_intel_matches = self._match_threat_intel(fields)
+        top_ti = sorted(
+            threat_intel_matches,
+            key=lambda item: {"critical": 4, "high": 3, "medium": 2, "low": 1}.get(str(item.get("severity") or "").lower(), 0),
+            reverse=True,
+        )[0] if threat_intel_matches else {}
 
         tags = self._normalize_tags(fields.get("tags"))
         active_list_tags, active_list_matches = self._match_active_lists(fields)
         tags.extend(active_list_tags)
+        tags.extend(threat_intel_tags)
         if subcategory:
             tags.append(f"event_type:{subcategory}")
+        if cmdb_asset.get("asset_id"):
+            tags.append(f"asset:{cmdb_asset['asset_id']}")
+        if cmdb_asset.get("criticality"):
+            tags.append(f"asset_criticality:{cmdb_asset['criticality']}")
+        if cmdb_asset.get("environment"):
+            tags.append(f"asset_environment:{cmdb_asset['environment']}")
+        tags.extend(self._normalize_tags(cmdb_asset.get("tags", "")))
         tags_text = ",".join(dict.fromkeys(tag for tag in tags if tag))
-        normalized_json = self._build_normalized_json(fields, active_list_matches)
+        normalized_json = self._build_normalized_json(fields, active_list_matches, cmdb_asset, threat_intel_matches)
 
         return (
             ts,
             event_id,
+            event_code,
             category,
             subcategory,
             event_action,
@@ -327,11 +501,20 @@ class WriterWorker:
             device_product,
             log_source,
             host_name,
+            cmdb_asset.get("asset_id", ""),
+            cmdb_asset.get("owner", ""),
+            cmdb_asset.get("criticality", ""),
+            cmdb_asset.get("environment", ""),
+            cmdb_asset.get("business_service", ""),
             user_name,
             target_user,
             process_name,
             process_executable,
             process_command,
+            top_ti.get("indicator", ""),
+            top_ti.get("indicator_type", ""),
+            top_ti.get("provider", ""),
+            top_ti.get("severity", ""),
             severity,
             message,
             normalized_json,
@@ -348,10 +531,11 @@ class WriterWorker:
 
         insert_sql = (
             f"INSERT INTO {s.events_table} "
-            "(ts, event_id, category, subcategory, event_action, event_outcome, "
+            "(ts, event_id, event_code, category, subcategory, event_action, event_outcome, "
             " src_ip, dst_ip, src_port, dst_port, device_vendor, device_product, "
-            " log_source, host_name, user_name, target_user, process_name, process_executable, "
-            " process_command, severity, message, normalized_json, tags) VALUES"
+            " log_source, host_name, asset_id, asset_owner, asset_criticality, asset_environment, asset_service, "
+            " user_name, target_user, process_name, process_executable, process_command, "
+            " ti_indicator, ti_indicator_type, ti_provider, ti_severity, severity, message, normalized_json, tags) VALUES"
         )
 
         while True:
